@@ -11,7 +11,7 @@ pub enum Bencode<'a> {
 impl<'a> fmt::Display for Bencode<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Str(v) => write!(f, "{v}"),
+            Self::Str(v) => write!(f, "\"{v}\""),
             Self::Int(v) => write!(f, "{v}"),
         }
     }
