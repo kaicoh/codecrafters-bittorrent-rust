@@ -36,8 +36,7 @@ impl<'a> Bencode<'a> {
             }
         } else if let Some(cap) = re_str.captures(input) {
             let len = cap["len"].parse::<usize>()?;
-            let len_digits = len / 10 + 1;
-            let str_start_at = len_digits + 1;
+            let str_start_at = cap["len"].len() + 1;
             let str_end_at = str_start_at + len;
             Ok(Self::Str(&input[str_start_at..str_end_at]))
         } else {
