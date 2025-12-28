@@ -1,8 +1,11 @@
+mod de;
 mod ser;
+
 pub use ser::Serializer;
 
 use crate::{BitTorrentError, Result};
 
+use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq};
 use std::collections::HashMap;
 use std::fmt;
@@ -337,17 +340,21 @@ impl Serialize for Bencode {
             }
             Self::Dict(map) => {
                 let mut ser_map = serializer.serialize_map(Some(map.len()))?;
-
-                let mut sorted_keys: Vec<&String> = map.keys().collect();
-                sorted_keys.sort();
-
-                for key in sorted_keys {
+                for key in map.keys() {
                     ser_map.serialize_entry(key, &map[key])?;
                 }
-
                 ser_map.end()
             }
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Bencode {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(de::ByteVisitor)
     }
 }
 
