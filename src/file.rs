@@ -1,7 +1,6 @@
-use crate::{Result, bencode::Bencode};
+use crate::{BitTorrentError, Result, bencode::Bencode};
 
 use serde::Serialize;
-use std::io::Read;
 
 const HASH_SIZE: usize = 20;
 
@@ -30,33 +29,41 @@ impl Info {
     }
 }
 
+impl TryFrom<&Bencode> for Info {
+    type Error = BitTorrentError;
+
+    fn try_from(bencode: &Bencode) -> Result<Self> {
+        let dict = bencode.as_dict()?;
+
+        let piece_length = dict.get_int("piece length")? as u64;
+        let pieces_bytes = dict.get_bytes("pieces")?.to_vec();
+        let name = dict.get_str("name")?.to_string();
+        let length = dict.get_int("length")? as u64;
+
+        Ok(Info {
+            piece_length,
+            pieces: Bencode::Str(pieces_bytes),
+            name,
+            length,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct MetaInfo {
     pub announce: String,
     pub info: Info,
 }
 
-impl MetaInfo {
-    pub fn new<R: Read>(mut reader: R) -> Result<Self> {
-        let bencode = Bencode::from_reader(&mut reader)?;
+impl TryFrom<&Bencode> for MetaInfo {
+    type Error = BitTorrentError;
+
+    fn try_from(bencode: &Bencode) -> Result<Self> {
         let dict = bencode.as_dict()?;
 
         let announce = dict.get_str("announce")?.to_string();
-
         let info_bencode = dict.get("info")?;
-        let info_dict = info_bencode.as_dict()?;
-
-        let piece_length = info_dict.get_int("piece length")? as u64;
-        let pieces_bytes = info_dict.get_bytes("pieces")?.to_vec();
-        let name = info_dict.get_str("name")?.to_string();
-        let length = info_dict.get_int("length")? as u64;
-
-        let info = Info {
-            piece_length,
-            pieces: Bencode::Str(pieces_bytes),
-            name,
-            length,
-        };
+        let info = Info::try_from(info_bencode)?;
 
         Ok(MetaInfo { announce, info })
     }

@@ -105,6 +105,11 @@ impl Bencode {
         Self::parse(&buffer)
     }
 
+    pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        Self::from_reader(&mut file)
+    }
+
     pub fn as_dict(&self) -> Result<BencodeDict> {
         match self {
             Bencode::Dict(items) => Ok(BencodeDict {

@@ -25,8 +25,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("{v}");
         }
         Command::Info { path } => {
-            let file = std::fs::File::open(path)?;
-            let meta_info = bit::file::MetaInfo::new(file)?;
+            let encoded = Bencode::from_path(path)?;
+            let meta_info = bit::file::MetaInfo::try_from(&encoded)?;
             println!("Tracker URL: {}", meta_info.announce);
             println!("Length: {}", meta_info.info.length);
 
