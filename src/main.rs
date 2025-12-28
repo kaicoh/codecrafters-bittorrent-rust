@@ -24,6 +24,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             let meta_info = bit::file::MetaInfo::new(file)?;
             println!("Tracker URL: {}", meta_info.announce);
             println!("Length: {}", meta_info.info.length);
+
+            for hash in meta_info.hashes() {
+                println!("Info Hash: {hash}");
+            }
         }
     }
 
