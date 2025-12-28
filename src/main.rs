@@ -16,7 +16,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     match cli.command {
         Command::Decode { token } => {
-            let v = Bencode::parse(&token)?;
+            let v = Bencode::parse(token.as_bytes())?;
             println!("{v}");
         }
     }
