@@ -9,7 +9,7 @@ const HASH_SIZE: usize = 20;
 pub struct Info {
     #[serde(rename = "piece length")]
     pub piece_length: u64,
-    pub pieces: Vec<[u8; HASH_SIZE]>,
+    pub pieces: Vec<Bencode>,
     pub name: String,
     pub length: u64,
 }
@@ -37,11 +37,7 @@ impl MetaInfo {
 
         let pieces = pieces_bytes
             .chunks(HASH_SIZE)
-            .map(|chunk| {
-                let mut arr = [0u8; HASH_SIZE];
-                arr.copy_from_slice(chunk);
-                arr
-            })
+            .map(|chunk| Bencode::Str(chunk.to_vec()))
             .collect();
 
         let info = Info {
@@ -59,12 +55,16 @@ impl MetaInfo {
 mod tests {
     use super::*;
     use crate::bencode::Serializer;
+    use sha1::{Digest, Sha1};
 
     #[test]
     fn test_info_serialization() {
         let info = Info {
             piece_length: 16384,
-            pieces: vec![],
+            pieces: vec![
+                Bencode::Str(hash("hello").to_vec()),
+                Bencode::Str(hash("world").to_vec()),
+            ],
             name: "test_file.txt".to_string(),
             length: 32768,
         };
@@ -72,7 +72,24 @@ mod tests {
         let mut bytes = Vec::new();
         info.serialize(&mut Serializer::new(&mut bytes)).unwrap();
 
-        let expected = "d6:lengthi32768e4:name13:test_file.txt12:piece lengthi16384e6:pieceslee";
-        assert_eq!(String::from_utf8(bytes).unwrap(), expected);
+        let expected = b"d6:lengthi32768e4:name13:test_file.txt12:piece lengthi16384e6:piecesl"
+            .iter()
+            .chain(b"20:")
+            .chain(&hash("hello"))
+            .chain(b"20:")
+            .chain(&hash("world"))
+            .chain(b"ee")
+            .cloned()
+            .collect::<Vec<u8>>();
+        assert_eq!(bytes, expected);
+    }
+
+    fn hash(v: &str) -> [u8; HASH_SIZE] {
+        let mut hasher = Sha1::new();
+        hasher.update(v.as_bytes());
+        let result = hasher.finalize();
+        let mut hash = [0u8; HASH_SIZE];
+        hash.copy_from_slice(&result);
+        hash
     }
 }
