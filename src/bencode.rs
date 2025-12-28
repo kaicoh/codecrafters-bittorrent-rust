@@ -169,35 +169,6 @@ impl<'a> Cursor<'a> {
     }
 }
 
-#[derive(Debug)]
-pub enum BencodeIter<'a> {
-    Unit(Option<Bencode<'a>>),
-    List(std::vec::IntoIter<Bencode<'a>>),
-}
-
-impl<'a> Iterator for BencodeIter<'a> {
-    type Item = Bencode<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            BencodeIter::Unit(inner) => inner.take(),
-            BencodeIter::List(v) => v.next(),
-        }
-    }
-}
-
-impl<'a> IntoIterator for Bencode<'a> {
-    type Item = Bencode<'a>;
-    type IntoIter = BencodeIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            Bencode::List(s) => BencodeIter::List(s.into_iter()),
-            _ => BencodeIter::Unit(Some(self)),
-        }
-    }
-}
-
 fn minus_zero(s: &str) -> bool {
     s == "-0"
 }
