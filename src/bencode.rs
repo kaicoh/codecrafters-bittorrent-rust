@@ -18,14 +18,26 @@ macro_rules! bail {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Bencode<'a> {
-    Str(&'a str),
+pub enum Bencode {
+    Str(String),
     Int(i64),
-    List(Vec<Bencode<'a>>),
-    Dict(Vec<(&'a str, Bencode<'a>)>),
+    List(Vec<Bencode>),
+    Dict(Vec<(String, Bencode)>),
 }
 
-impl<'a> fmt::Display for Bencode<'a> {
+impl<'a> From<&'a str> for Bencode {
+    fn from(value: &'a str) -> Self {
+        Bencode::Str(value.to_string())
+    }
+}
+
+impl From<i64> for Bencode {
+    fn from(value: i64) -> Self {
+        Bencode::Int(value)
+    }
+}
+
+impl fmt::Display for Bencode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Str(v) => write!(f, "\"{v}\""),
@@ -50,16 +62,16 @@ impl<'a> fmt::Display for Bencode<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a str> for Bencode<'a> {
+impl TryFrom<String> for Bencode {
     type Error = BitTorrentError;
 
-    fn try_from(value: &'a str) -> Result<Self> {
+    fn try_from(value: String) -> Result<Self> {
         Self::parse(value.as_bytes())
     }
 }
 
-impl<'a> Bencode<'a> {
-    pub fn parse(input: &'a [u8]) -> Result<Self> {
+impl Bencode {
+    pub fn parse(input: &[u8]) -> Result<Self> {
         let mut cursor = Cursor::new(input);
         let c = match cursor.next_char() {
             Some(ch) => ch,
@@ -68,7 +80,7 @@ impl<'a> Bencode<'a> {
         Self::get_from_cursor(&mut cursor, c, "Invalid bencode format")
     }
 
-    fn new_int(cursor: &mut Cursor<'a>) -> Result<Self> {
+    fn new_int(cursor: &mut Cursor<'_>) -> Result<Self> {
         let bytes = cursor.read_until('e')?;
         bail_if!(
             bytes.is_empty() || minus_zero(bytes) || leading_zeros(bytes),
@@ -78,7 +90,7 @@ impl<'a> Bencode<'a> {
         Ok(Bencode::Int(int_val))
     }
 
-    fn new_str(cursor: &mut Cursor<'a>, first_char: char) -> Result<Self> {
+    fn new_str(cursor: &mut Cursor<'_>, first_char: char) -> Result<Self> {
         let mut len_str = String::new();
         len_str.push(first_char);
 
@@ -92,12 +104,12 @@ impl<'a> Bencode<'a> {
 
         let str_len: usize = len_str.parse()?;
         let str_bytes = cursor.read_exact(str_len)?;
-        let str_val = std::str::from_utf8(str_bytes)?;
+        let str_val = std::str::from_utf8(str_bytes)?.to_string();
 
         Ok(Bencode::Str(str_val))
     }
 
-    fn new_list(cursor: &mut Cursor<'a>) -> Result<Self> {
+    fn new_list(cursor: &mut Cursor<'_>) -> Result<Self> {
         let mut items: Vec<Self> = Vec::new();
 
         match cursor.next_char() {
@@ -125,8 +137,8 @@ impl<'a> Bencode<'a> {
         }
     }
 
-    fn new_dict(cursor: &mut Cursor<'a>) -> Result<Self> {
-        let mut items: Vec<(&'a str, Self)> = Vec::new();
+    fn new_dict(cursor: &mut Cursor<'_>) -> Result<Self> {
+        let mut items: Vec<(String, Self)> = Vec::new();
 
         match cursor.next_char() {
             Some('e') => Ok(Bencode::Dict(items)),
@@ -170,7 +182,7 @@ impl<'a> Bencode<'a> {
     }
 
     fn get_from_cursor(
-        cursor: &mut Cursor<'a>,
+        cursor: &mut Cursor<'_>,
         first_char: char,
         msg: &'static str,
     ) -> Result<Self> {
@@ -186,13 +198,13 @@ impl<'a> Bencode<'a> {
 
 #[derive(Debug)]
 struct Cursor<'a> {
-    inner: std::io::Cursor<&'a [u8]>,
+    inner: io::Cursor<&'a [u8]>,
 }
 
 impl<'a> Cursor<'a> {
     fn new(input: &'a [u8]) -> Self {
         Self {
-            inner: std::io::Cursor::new(input),
+            inner: io::Cursor::new(input),
         }
     }
 
@@ -297,11 +309,11 @@ mod tests {
     fn it_encodes_string() {
         let input = b"5:hello";
         let val = Bencode::parse(input).unwrap();
-        assert_eq!(val, Bencode::Str("hello"));
+        assert_eq!(val, Bencode::Str("hello".into()));
 
         let input = b"0:";
         let val = Bencode::parse(input).unwrap();
-        assert_eq!(val, Bencode::Str(""));
+        assert_eq!(val, Bencode::Str("".into()));
     }
 
     #[test]
@@ -310,14 +322,17 @@ mod tests {
         let val = Bencode::parse(input).unwrap();
         assert_eq!(
             val,
-            Bencode::List(vec![Bencode::Str("spam"), Bencode::Str("eggs"),])
+            Bencode::List(vec![
+                Bencode::Str("spam".into()),
+                Bencode::Str("eggs".into()),
+            ])
         );
 
         let input = b"l5:helloi52ee";
         let val = Bencode::parse(input).unwrap();
         assert_eq!(
             val,
-            Bencode::List(vec![Bencode::Str("hello"), Bencode::Int(52),])
+            Bencode::List(vec![Bencode::Str("hello".into()), Bencode::Int(52),])
         );
 
         let input = b"le";
@@ -332,8 +347,8 @@ mod tests {
         assert_eq!(
             val,
             Bencode::Dict(vec![
-                ("foo", Bencode::Str("bar")),
-                ("baz", Bencode::Int(42)),
+                ("foo".into(), Bencode::Str("bar".into())),
+                ("baz".into(), Bencode::Int(42)),
             ])
         );
 
@@ -347,15 +362,15 @@ mod tests {
         let bencode_int = Bencode::Int(42);
         assert_eq!(bencode_int.to_string(), "42");
 
-        let bencode_str = Bencode::Str("hello");
+        let bencode_str = Bencode::Str("hello".into());
         assert_eq!(bencode_str.to_string(), "\"hello\"");
 
-        let bencode_list = Bencode::List(vec![Bencode::Int(1), Bencode::Str("two")]);
+        let bencode_list = Bencode::List(vec![Bencode::Int(1), Bencode::Str("two".into())]);
         assert_eq!(bencode_list.to_string(), "[1,\"two\"]");
 
         let bencode_dict = Bencode::Dict(vec![
-            ("foo", Bencode::Str("bar")),
-            ("baz", Bencode::Int(123)),
+            ("foo".into(), Bencode::Str("bar".into())),
+            ("baz".into(), Bencode::Int(123)),
         ]);
         assert_eq!(bencode_dict.to_string(), "{\"foo\":\"bar\",\"baz\":123}");
     }
