@@ -235,6 +235,16 @@ impl<'a, W: io::Write> ser::Serializer for &'a mut Serializer<W> {
     }
 }
 
+impl<'a, W: io::Write> SerializeSeq<'a, W> {
+    fn write_beginning(&mut self) -> Result<(), BitTorrentError> {
+        if self.first {
+            self.serializer.writer.write_all(b"l")?;
+            self.first = false;
+        }
+        Ok(())
+    }
+}
+
 impl<'a, W: io::Write> ser::SerializeSeq for SerializeSeq<'a, W> {
     type Ok = ();
     type Error = BitTorrentError;
@@ -243,15 +253,14 @@ impl<'a, W: io::Write> ser::SerializeSeq for SerializeSeq<'a, W> {
         &mut self,
         value: &T,
     ) -> Result<(), Self::Error> {
-        if self.first {
-            self.serializer.writer.write_all(b"l")?;
-            self.first = false;
-        }
+        self.write_beginning()?;
         value.serialize(&mut *self.serializer)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        self.serializer.writer.write_all(b"e")?;
+        let mut val = self;
+        val.write_beginning()?;
+        val.serializer.writer.write_all(b"e")?;
         Ok(())
     }
 }

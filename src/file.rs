@@ -7,6 +7,7 @@ const HASH_SIZE: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Info {
+    #[serde(rename = "piece length")]
     pub piece_length: u64,
     pub pieces: Vec<[u8; HASH_SIZE]>,
     pub name: String,
@@ -51,5 +52,27 @@ impl MetaInfo {
         };
 
         Ok(MetaInfo { announce, info })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bencode::Serializer;
+
+    #[test]
+    fn test_info_serialization() {
+        let info = Info {
+            piece_length: 16384,
+            pieces: vec![],
+            name: "test_file.txt".to_string(),
+            length: 32768,
+        };
+
+        let mut bytes = Vec::new();
+        info.serialize(&mut Serializer::new(&mut bytes)).unwrap();
+
+        let expected = "d6:lengthi32768e4:name13:test_file.txt12:piece lengthi16384e6:pieceslee";
+        assert_eq!(String::from_utf8(bytes).unwrap(), expected);
     }
 }
