@@ -9,4 +9,5 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     Decode { token: String },
+    Info { path: String },
 }

@@ -1,6 +1,7 @@
 pub mod bencode;
 mod cli;
 mod error;
+pub mod file;
 
 pub use cli::{Cli, Command};
 pub use error::BitTorrentError;

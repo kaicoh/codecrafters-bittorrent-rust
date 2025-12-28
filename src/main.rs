@@ -19,6 +19,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             let v = Bencode::parse(token.as_bytes())?;
             println!("{v}");
         }
+        Command::Info { path } => {
+            let file = std::fs::File::open(path)?;
+            let meta_info = bit::file::MetaInfo::new(file)?;
+            println!("Tracker URL: {}", meta_info.announce);
+            println!("Length: {}", meta_info.info.length);
+        }
     }
 
     Ok(())

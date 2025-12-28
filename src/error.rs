@@ -13,4 +13,7 @@ pub enum BitTorrentError {
 
     #[error("UTF8 Error: {0}")]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error("FromUtf8 Error: {0}")]
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
 }

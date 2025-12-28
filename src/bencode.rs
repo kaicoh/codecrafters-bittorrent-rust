@@ -1,5 +1,6 @@
 use crate::{BitTorrentError, Result};
 
+use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Read};
 
@@ -19,7 +20,7 @@ macro_rules! bail {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bencode {
-    Str(String),
+    Str(Vec<u8>),
     Int(i64),
     List(Vec<Bencode>),
     Dict(Vec<(String, Bencode)>),
@@ -27,7 +28,7 @@ pub enum Bencode {
 
 impl<'a> From<&'a str> for Bencode {
     fn from(value: &'a str) -> Self {
-        Bencode::Str(value.to_string())
+        Bencode::Str(value.as_bytes().to_vec())
     }
 }
 
@@ -40,7 +41,7 @@ impl From<i64> for Bencode {
 impl fmt::Display for Bencode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Str(v) => write!(f, "\"{v}\""),
+            Self::Str(v) => write!(f, "\"{}\"", String::from_utf8_lossy(v)),
             Self::Int(v) => write!(f, "{v}"),
             Self::List(vals) => write!(
                 f,
@@ -80,6 +81,25 @@ impl Bencode {
         Self::get_from_cursor(&mut cursor, c, "Invalid bencode format")
     }
 
+    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self> {
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer)?;
+        Self::parse(&buffer)
+    }
+
+    pub fn as_dict(&self) -> Result<BencodeDict> {
+        match self {
+            Bencode::Dict(items) => {
+                let mut map = HashMap::new();
+                for (k, v) in items {
+                    map.insert(k.clone(), v.clone());
+                }
+                Ok(BencodeDict { inner: map })
+            }
+            _ => bail!("Bencode value is not a dictionary"),
+        }
+    }
+
     fn new_int(cursor: &mut Cursor<'_>) -> Result<Self> {
         let bytes = cursor.read_until('e')?;
         bail_if!(
@@ -104,9 +124,8 @@ impl Bencode {
 
         let str_len: usize = len_str.parse()?;
         let str_bytes = cursor.read_exact(str_len)?;
-        let str_val = std::str::from_utf8(str_bytes)?.to_string();
 
-        Ok(Bencode::Str(str_val))
+        Ok(Bencode::Str(str_bytes.to_vec()))
     }
 
     fn new_list(cursor: &mut Cursor<'_>) -> Result<Self> {
@@ -156,7 +175,7 @@ impl Bencode {
                             )?;
 
                             let key = match key_bencode {
-                                Bencode::Str(s) => s,
+                                Bencode::Str(s) => String::from_utf8(s)?,
                                 _ => bail!("Dictionary keys must be strings"),
                             };
 
@@ -192,6 +211,41 @@ impl Bencode {
             'd' => Self::new_dict(cursor),
             c if c.is_ascii_digit() => Self::new_str(cursor, c),
             _ => bail!(msg),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BencodeDict {
+    inner: HashMap<String, Bencode>,
+}
+
+impl BencodeDict {
+    pub fn get(&self, key: &str) -> Result<&Bencode> {
+        match self.inner.get(key) {
+            Some(v) => Ok(v),
+            None => bail!("Key not found"),
+        }
+    }
+
+    pub fn get_str(&self, key: &str) -> Result<&str> {
+        match self.inner.get(key) {
+            Some(Bencode::Str(v)) => Ok(std::str::from_utf8(v)?),
+            _ => bail!("Key not found or not a string"),
+        }
+    }
+
+    pub fn get_bytes(&self, key: &str) -> Result<&[u8]> {
+        match self.inner.get(key) {
+            Some(Bencode::Str(v)) => Ok(v),
+            _ => bail!("Key not found or not a string"),
+        }
+    }
+
+    pub fn get_int(&self, key: &str) -> Result<i64> {
+        match self.inner.get(key) {
+            Some(Bencode::Int(v)) => Ok(*v),
+            _ => bail!("Key not found or not an integer"),
         }
     }
 }
