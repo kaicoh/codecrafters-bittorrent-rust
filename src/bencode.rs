@@ -46,12 +46,11 @@ impl<'a> TryFrom<&'a str> for Bencode<'a> {
 
     fn try_from(value: &'a str) -> Result<Self> {
         let mut cursor = Cursor::new(value);
-        match cursor.next_char() {
-            Some('i') => Self::new_int(&mut cursor),
-            Some('l') => Self::new_list(&mut cursor),
-            Some(c) if c.is_ascii_digit() => Self::new_str(&mut cursor, c),
-            _ => bail!("Invalid bencode format"),
-        }
+        let c = match cursor.next_char() {
+            Some(ch) => ch,
+            None => bail!("Empty input"),
+        };
+        Self::get_from_cursor(&mut cursor, c, "Invalid bencode format")
     }
 }
 
@@ -100,12 +99,11 @@ impl<'a> Bencode<'a> {
                     match cursor.next_char() {
                         Some('e') => break,
                         Some(c) => {
-                            let item = match c {
-                                'i' => Self::new_int(cursor)?,
-                                'l' => Self::new_list(cursor)?,
-                                c if c.is_ascii_digit() => Self::new_str(cursor, c)?,
-                                _ => bail!("Invalid bencode format in list"),
-                            };
+                            let item = Self::get_from_cursor(
+                                cursor,
+                                c,
+                                "Invalid bencode format in list item",
+                            )?;
 
                             items.push(item);
                         }
@@ -114,6 +112,19 @@ impl<'a> Bencode<'a> {
                 }
                 Ok(Bencode::List(items))
             }
+        }
+    }
+
+    fn get_from_cursor(
+        cursor: &mut Cursor<'a>,
+        first_char: char,
+        msg: &'static str,
+    ) -> Result<Self> {
+        match first_char {
+            'i' => Self::new_int(cursor),
+            'l' => Self::new_list(cursor),
+            c if c.is_ascii_digit() => Self::new_str(cursor, c),
+            _ => bail!(msg),
         }
     }
 }
