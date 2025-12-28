@@ -22,6 +22,7 @@ pub enum Bencode<'a> {
     Str(&'a str),
     Int(i64),
     List(Vec<Bencode<'a>>),
+    Dict(Vec<(&'a str, Bencode<'a>)>),
 }
 
 impl<'a> fmt::Display for Bencode<'a> {
@@ -34,6 +35,14 @@ impl<'a> fmt::Display for Bencode<'a> {
                 "[{}]",
                 vals.iter()
                     .map(|v| format!("{v}"))
+                    .collect::<Vec<String>>()
+                    .join(",")
+            ),
+            Self::Dict(v) => write!(
+                f,
+                "{{{}}}",
+                v.iter()
+                    .map(|(k, v)| format!("\"{k}\":{v}"))
                     .collect::<Vec<String>>()
                     .join(",")
             ),
@@ -115,6 +124,50 @@ impl<'a> Bencode<'a> {
         }
     }
 
+    fn new_dict(cursor: &mut Cursor<'a>) -> Result<Self> {
+        let mut items: Vec<(&'a str, Self)> = Vec::new();
+
+        match cursor.next_char() {
+            Some('e') => Ok(Bencode::Dict(items)),
+            _ => {
+                cursor.step_back();
+
+                loop {
+                    match cursor.next_char() {
+                        Some('e') => break,
+                        Some(c) => {
+                            let key_bencode = Self::get_from_cursor(
+                                cursor,
+                                c,
+                                "Invalid bencode format in dict key",
+                            )?;
+
+                            let key = match key_bencode {
+                                Bencode::Str(s) => s,
+                                _ => bail!("Dictionary keys must be strings"),
+                            };
+
+                            let value_first_char = match cursor.next_char() {
+                                Some(ch) => ch,
+                                None => bail!("Unexpected end of input in dict value"),
+                            };
+
+                            let value = Self::get_from_cursor(
+                                cursor,
+                                value_first_char,
+                                "Invalid bencode format in dict value",
+                            )?;
+
+                            items.push((key, value));
+                        }
+                        None => bail!("Unexpected end of input in dict"),
+                    }
+                }
+                Ok(Bencode::Dict(items))
+            }
+        }
+    }
+
     fn get_from_cursor(
         cursor: &mut Cursor<'a>,
         first_char: char,
@@ -123,6 +176,7 @@ impl<'a> Bencode<'a> {
         match first_char {
             'i' => Self::new_int(cursor),
             'l' => Self::new_list(cursor),
+            'd' => Self::new_dict(cursor),
             c if c.is_ascii_digit() => Self::new_str(cursor, c),
             _ => bail!(msg),
         }
@@ -268,6 +322,23 @@ mod tests {
     }
 
     #[test]
+    fn it_encodes_dict() {
+        let input = "d3:foo3:bar3:bazi42ee";
+        let val = Bencode::parse(input).unwrap();
+        assert_eq!(
+            val,
+            Bencode::Dict(vec![
+                ("foo", Bencode::Str("bar")),
+                ("baz", Bencode::Int(42)),
+            ])
+        );
+
+        let input = "de";
+        let val = Bencode::parse(input).unwrap();
+        assert_eq!(val, Bencode::Dict(vec![]));
+    }
+
+    #[test]
     fn it_displays_bencode() {
         let bencode_int = Bencode::Int(42);
         assert_eq!(bencode_int.to_string(), "42");
@@ -277,5 +348,11 @@ mod tests {
 
         let bencode_list = Bencode::List(vec![Bencode::Int(1), Bencode::Str("two")]);
         assert_eq!(bencode_list.to_string(), "[1,\"two\"]");
+
+        let bencode_dict = Bencode::Dict(vec![
+            ("foo", Bencode::Str("bar")),
+            ("baz", Bencode::Int(123)),
+        ]);
+        assert_eq!(bencode_dict.to_string(), "{\"foo\":\"bar\",\"baz\":123}");
     }
 }
