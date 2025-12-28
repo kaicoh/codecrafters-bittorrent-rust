@@ -1,8 +1,10 @@
-use crate::{BitTorrentError, Result, bencode::Bencode};
+use crate::{
+    BitTorrentError, Result,
+    bencode::Bencode,
+    util::{HASH_SIZE, Hash20},
+};
 
 use serde::Serialize;
-
-const HASH_SIZE: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Info {
@@ -14,16 +16,12 @@ pub struct Info {
 }
 
 impl Info {
-    pub fn piece_hashes(&self) -> Result<Vec<[u8; HASH_SIZE]>> {
+    pub fn piece_hashes(&self) -> Result<Vec<Hash20>> {
         let hashes = self
             .pieces
             .as_str()?
             .chunks(HASH_SIZE)
-            .map(|chunk| {
-                let mut hash = [0u8; HASH_SIZE];
-                hash.copy_from_slice(chunk);
-                hash
-            })
+            .map(Hash20::from)
             .collect();
         Ok(hashes)
     }

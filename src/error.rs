@@ -17,6 +17,15 @@ pub enum BitTorrentError {
     #[error("FromUtf8 Error: {0}")]
     FromUtf8Error(#[from] std::string::FromUtf8Error),
 
-    #[error("{0}")]
+    #[error("Serde Error: {0}")]
     SerdeError(String),
+
+    #[error("UrlEncodeError: {0}")]
+    UrlEncodeError(#[from] serde_urlencoded::ser::Error),
+
+    #[error("TrackerError: {0}")]
+    TrackerError(&'static str),
+
+    #[error("Reqwest Error: {0}")]
+    ReqwestError(#[from] reqwest::Error),
 }

@@ -10,4 +10,5 @@ pub struct Cli {
 pub enum Command {
     Decode { token: String },
     Info { path: String },
+    Peers { path: String },
 }
