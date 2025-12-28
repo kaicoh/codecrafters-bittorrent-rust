@@ -41,8 +41,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
             println!("Piece Hashes:");
             for hash in info.piece_hashes()? {
-                let digest = Sha1::digest(hash);
-                println!("{:x}", digest);
+                println!("{}", hex::encode(hash));
             }
         }
     }
