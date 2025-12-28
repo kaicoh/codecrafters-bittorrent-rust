@@ -1,4 +1,6 @@
 use super::Result;
+
+use percent_encoding::{NON_ALPHANUMERIC, percent_encode};
 use serde::ser;
 
 pub const HASH_SIZE: usize = 20;
@@ -25,12 +27,19 @@ impl Hash20 {
     }
 }
 
+impl AsRef<[u8]> for Hash20 {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl ser::Serialize for Hash20 {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: ser::Serializer,
     {
-        serializer.serialize_bytes(&self.0)
+        let encoded = percent_encode(&self.0, NON_ALPHANUMERIC).to_string();
+        serializer.serialize_str(&encoded)
     }
 }
 
