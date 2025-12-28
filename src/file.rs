@@ -3,6 +3,8 @@ use crate::{Result, bencode::Bencode};
 use serde::Serialize;
 use std::io::Read;
 
+const HASH_SIZE: usize = 20;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Info {
     #[serde(rename = "piece length")]
@@ -10,6 +12,22 @@ pub struct Info {
     pub pieces: Bencode,
     pub name: String,
     pub length: u64,
+}
+
+impl Info {
+    pub fn piece_hashes(&self) -> Result<Vec<[u8; HASH_SIZE]>> {
+        let hashes = self
+            .pieces
+            .as_str()?
+            .chunks(HASH_SIZE)
+            .map(|chunk| {
+                let mut hash = [0u8; HASH_SIZE];
+                hash.copy_from_slice(chunk);
+                hash
+            })
+            .collect();
+        Ok(hashes)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,8 +68,6 @@ mod tests {
     use crate::bencode::Serializer;
     use sha1::{Digest, Sha1};
 
-    const HASH_SIZE: usize = 20;
-
     #[test]
     fn test_info_serialization() {
         let info = Info {
@@ -59,7 +75,7 @@ mod tests {
             pieces: Bencode::Str(
                 hash("hello")
                     .into_iter()
-                    .chain(hash("world").into_iter())
+                    .chain(hash("world"))
                     .collect::<Vec<u8>>(),
             ),
             name: "test_file.txt".to_string(),

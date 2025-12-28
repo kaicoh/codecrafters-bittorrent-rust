@@ -89,6 +89,13 @@ impl Bencode {
         Self::get_from_cursor(&mut cursor, c, "Invalid bencode format")
     }
 
+    pub fn as_str(&self) -> Result<&[u8]> {
+        match self {
+            Bencode::Str(v) => Ok(v),
+            _ => bail!("Bencode value is not a string"),
+        }
+    }
+
     pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self> {
         let mut buffer = Vec::new();
         reader.read_to_end(&mut buffer)?;

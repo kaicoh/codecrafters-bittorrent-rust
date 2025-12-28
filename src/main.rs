@@ -30,10 +30,20 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("Tracker URL: {}", meta_info.announce);
             println!("Length: {}", meta_info.info.length);
 
+            let info = meta_info.info;
+
             let mut bytes = Vec::new();
-            meta_info.info.serialize(&mut Serializer::new(&mut bytes))?;
+            info.serialize(&mut Serializer::new(&mut bytes))?;
             let hash = Sha1::digest(&bytes);
             println!("Info Hash: {:x}", hash);
+
+            println!("Piece Length: {}", info.piece_length);
+
+            println!("Piece Hashes:");
+            for hash in info.piece_hashes()? {
+                let digest = Sha1::digest(hash);
+                println!("{:x}", digest);
+            }
         }
     }
 
