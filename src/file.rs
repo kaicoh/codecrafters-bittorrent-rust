@@ -1,6 +1,5 @@
 use crate::{Result, bencode::Bencode};
 
-use sha1::{Digest, Sha1};
 use std::io::Read;
 
 const HASH_SIZE: usize = 20;
@@ -51,14 +50,5 @@ impl MetaInfo {
         };
 
         Ok(MetaInfo { announce, info })
-    }
-
-    pub fn hashes(&self) -> impl Iterator<Item = String> + '_ {
-        self.info.pieces.iter().map(|hash| {
-            let mut hasher = Sha1::new();
-            hasher.update(hash);
-            let result = hasher.finalize();
-            hex::encode(result)
-        })
     }
 }
