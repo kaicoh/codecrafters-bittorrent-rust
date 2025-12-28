@@ -1,10 +1,11 @@
 use crate::{Result, bencode::Bencode};
 
+use serde::Serialize;
 use std::io::Read;
 
 const HASH_SIZE: usize = 20;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Info {
     pub piece_length: u64,
     pub pieces: Vec<[u8; HASH_SIZE]>,
@@ -12,7 +13,7 @@ pub struct Info {
     pub length: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MetaInfo {
     pub announce: String,
     pub info: Info,

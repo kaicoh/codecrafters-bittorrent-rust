@@ -1,5 +1,9 @@
+mod ser;
+pub use ser::Serializer;
+
 use crate::{BitTorrentError, Result};
 
+use serde::ser::{Serialize, SerializeMap, SerializeSeq};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, Read};
@@ -23,7 +27,7 @@ pub enum Bencode {
     Str(Vec<u8>),
     Int(i64),
     List(Vec<Bencode>),
-    Dict(Vec<(String, Bencode)>),
+    Dict(HashMap<String, Bencode>),
 }
 
 impl<'a> From<&'a str> for Bencode {
@@ -51,14 +55,18 @@ impl fmt::Display for Bencode {
                     .collect::<Vec<String>>()
                     .join(",")
             ),
-            Self::Dict(v) => write!(
-                f,
-                "{{{}}}",
-                v.iter()
-                    .map(|(k, v)| format!("\"{k}\":{v}"))
-                    .collect::<Vec<String>>()
-                    .join(",")
-            ),
+            Self::Dict(v) => {
+                let mut items: Vec<String> = Vec::new();
+                let mut sorted_keys: Vec<&String> = v.keys().collect();
+                sorted_keys.sort();
+
+                for key in sorted_keys {
+                    let value = &v[key];
+                    items.push(format!("\"{}\":{}", key, value));
+                }
+
+                write!(f, "{{{}}}", items.join(","))
+            }
         }
     }
 }
@@ -89,13 +97,9 @@ impl Bencode {
 
     pub fn as_dict(&self) -> Result<BencodeDict> {
         match self {
-            Bencode::Dict(items) => {
-                let mut map = HashMap::new();
-                for (k, v) in items {
-                    map.insert(k.clone(), v.clone());
-                }
-                Ok(BencodeDict { inner: map })
-            }
+            Bencode::Dict(items) => Ok(BencodeDict {
+                inner: items.clone(),
+            }),
             _ => bail!("Bencode value is not a dictionary"),
         }
     }
@@ -157,7 +161,7 @@ impl Bencode {
     }
 
     fn new_dict(cursor: &mut Cursor<'_>) -> Result<Self> {
-        let mut items: Vec<(String, Self)> = Vec::new();
+        let mut items: HashMap<String, Self> = HashMap::new();
 
         match cursor.next_char() {
             Some('e') => Ok(Bencode::Dict(items)),
@@ -190,7 +194,7 @@ impl Bencode {
                                 "Invalid bencode format in dict value",
                             )?;
 
-                            items.push((key, value));
+                            items.insert(key, value);
                         }
                         None => bail!("Unexpected end of input in dict"),
                     }
@@ -309,6 +313,37 @@ impl<'a> Cursor<'a> {
     }
 }
 
+impl Serialize for Bencode {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        match self {
+            Self::Int(i) => serializer.serialize_i64(*i),
+            Self::Str(bytes) => serializer.serialize_bytes(bytes),
+            Self::List(list) => {
+                let mut seq = serializer.serialize_seq(Some(list.len()))?;
+                for item in list {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            }
+            Self::Dict(map) => {
+                let mut ser_map = serializer.serialize_map(Some(map.len()))?;
+
+                let mut sorted_keys: Vec<&String> = map.keys().collect();
+                sorted_keys.sort();
+
+                for key in sorted_keys {
+                    ser_map.serialize_entry(key, &map[key])?;
+                }
+
+                ser_map.end()
+            }
+        }
+    }
+}
+
 fn minus_zero(s: &[u8]) -> bool {
     s == b"-0"
 }
@@ -400,15 +435,18 @@ mod tests {
         let val = Bencode::parse(input).unwrap();
         assert_eq!(
             val,
-            Bencode::Dict(vec![
-                ("foo".into(), Bencode::Str("bar".into())),
-                ("baz".into(), Bencode::Int(42)),
-            ])
+            Bencode::Dict(
+                [
+                    ("foo".into(), Bencode::Str("bar".into())),
+                    ("baz".into(), Bencode::Int(42)),
+                ]
+                .into()
+            )
         );
 
         let input = b"de";
         let val = Bencode::parse(input).unwrap();
-        assert_eq!(val, Bencode::Dict(vec![]));
+        assert_eq!(val, Bencode::Dict([].into()));
     }
 
     #[test]
@@ -422,10 +460,13 @@ mod tests {
         let bencode_list = Bencode::List(vec![Bencode::Int(1), Bencode::Str("two".into())]);
         assert_eq!(bencode_list.to_string(), "[1,\"two\"]");
 
-        let bencode_dict = Bencode::Dict(vec![
-            ("foo".into(), Bencode::Str("bar".into())),
-            ("baz".into(), Bencode::Int(123)),
-        ]);
-        assert_eq!(bencode_dict.to_string(), "{\"foo\":\"bar\",\"baz\":123}");
+        let bencode_dict = Bencode::Dict(
+            [
+                ("foo".into(), Bencode::Str("bar".into())),
+                ("baz".into(), Bencode::Int(123)),
+            ]
+            .into(),
+        );
+        assert_eq!(bencode_dict.to_string(), "{\"baz\":123,\"foo\":\"bar\"}");
     }
 }

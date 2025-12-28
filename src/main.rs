@@ -1,7 +1,12 @@
 use codecrafters_bittorrent as bit;
 
-use bit::{Cli, Command, bencode::Bencode};
+use bit::{
+    Cli, Command,
+    bencode::{Bencode, Serializer},
+};
 use clap::Parser;
+use serde::Serialize;
+use sha1::{Digest, Sha1};
 use std::error::Error;
 
 fn main() {
@@ -24,6 +29,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             let meta_info = bit::file::MetaInfo::new(file)?;
             println!("Tracker URL: {}", meta_info.announce);
             println!("Length: {}", meta_info.info.length);
+
+            let mut bytes = Vec::new();
+            meta_info.info.serialize(&mut Serializer::new(&mut bytes))?;
+            let hash = Sha1::digest(&bytes);
+            println!("Info Hash: {:x}", hash);
         }
     }
 
