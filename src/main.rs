@@ -4,14 +4,16 @@ use bit::{
     Cli, Command,
     bencode::{Bencode, Serializer},
     meta::{Meta, TrackerRequest, TrackerResponse},
-    peers::Peer,
-    util::Bytes20,
+    peers::{Download, Peer},
+    util::{Bytes20, Pool},
 };
 use clap::Parser;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 use std::error::Error;
 use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 const MAX_ATTEMPTS: u8 = 5;
 
@@ -75,22 +77,32 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
-            let peer = resp.peers.first().ok_or("No peers found")?;
-            let mut conn = peer.connect(info_hash, peer_id)?;
-
-            conn.wait_for_bitfield()?;
-            conn.send_interested()?;
-            conn.wait_for_unchoke()?;
+            let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
 
             let length = get_piece_length(index, &meta)?;
+            let piece_hash = meta
+                .info
+                .piece_hashes()?
+                .get(index as usize)
+                .copied()
+                .ok_or("Invalid piece index")?;
 
             let mut attempts = 0;
 
             while attempts < MAX_ATTEMPTS {
-                let piece_data = conn.download_piece(index, length as u32).await?;
+                let peer = {
+                    let mut pool = pool.lock().await;
+                    pool.get_item().await
+                };
+
+                let piece_data = peer
+                    .connect(info_hash, peer_id)?
+                    .download_piece(index, length as u32)
+                    .await?;
+
                 let hash = sha1_hash(&piece_data);
 
-                if match_hash(index as usize, &hash, &meta)? {
+                if piece_hash == hash {
                     std::fs::write(output, piece_data)?;
                     println!("Piece {index} downloaded and verified.");
                     break;
@@ -106,37 +118,78 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
-            let peer = resp.peers.first().ok_or("No peers found")?;
-            let mut conn = peer.connect(info_hash, peer_id)?;
+            println!("Found {} peers", resp.peers.len());
 
-            conn.wait_for_bitfield()?;
-            conn.send_interested()?;
-            conn.wait_for_unchoke()?;
+            let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
 
             let num_pieces = meta.info.num_pieces()?;
-            let mut file_data = Vec::new();
+            let mut downloads: Vec<Download> = Vec::new();
+            let mut tasks = tokio::task::JoinSet::<Download>::new();
 
             for index in 0..num_pieces {
-                let length = get_piece_length(index as u32, &meta)?;
                 let mut attempts = 0;
 
-                while attempts < MAX_ATTEMPTS {
-                    let piece_data = conn.download_piece(index as u32, length as u32).await?;
-                    let hash = sha1_hash(&piece_data);
+                let length = get_piece_length(index as u32, &meta)?;
+                let piece_hash = meta
+                    .info
+                    .piece_hashes()?
+                    .get(index)
+                    .copied()
+                    .ok_or("Invalid piece index")?;
 
-                    if match_hash(index, &hash, &meta)? {
-                        file_data.extend_from_slice(&piece_data);
-                        println!("Downloaded and verified piece {}/{num_pieces}", index + 1);
-                        break;
-                    } else {
-                        attempts += 1;
-                        println!(
-                            "Hash mismatch for piece {}. Attempt {attempts}/{MAX_ATTEMPTS}.",
-                            index + 1,
-                        );
+                let pool = pool.clone();
+
+                tasks.spawn(async move {
+                    while attempts < MAX_ATTEMPTS {
+                        let peer = {
+                            let mut pool = pool.lock().await;
+                            pool.get_item().await
+                        };
+                        println!("Get peer for piece {}", index + 1);
+
+                        let piece_data = peer
+                            .connect(info_hash, peer_id)
+                            .expect("Failed to connect to peer")
+                            .download_piece(index as u32, length as u32)
+                            .await
+                            .expect("Failed to download piece");
+
+                        let hash = sha1_hash(&piece_data);
+
+                        if piece_hash == hash {
+                            println!("Downloaded and verified piece {}/{num_pieces}", index + 1);
+
+                            return Download {
+                                index: index as u32,
+                                block: piece_data,
+                            };
+                        } else {
+                            attempts += 1;
+                            println!(
+                                "Hash mismatch for piece {}. Attempt {attempts}/{MAX_ATTEMPTS}.",
+                                index + 1,
+                            );
+                        }
                     }
-                }
+
+                    panic!(
+                        "Failed to download piece {} after {MAX_ATTEMPTS} attempts",
+                        index + 1
+                    );
+                });
             }
+
+            while let Some(res) = tasks.join_next().await {
+                let download = res?;
+                downloads.push(download);
+            }
+
+            downloads.sort();
+
+            let file_data = downloads
+                .into_iter()
+                .flat_map(|d| d.block)
+                .collect::<Vec<u8>>();
 
             std::fs::write(output, file_data)?;
         }
@@ -188,9 +241,4 @@ fn get_piece_length(index: u32, meta: &Meta) -> Result<u32, Box<dyn Error>> {
 fn sha1_hash(bytes: &[u8]) -> Bytes20 {
     let digest = Sha1::digest(bytes);
     Bytes20::from(digest.as_ref())
-}
-
-fn match_hash(index: usize, hash: &Bytes20, meta: &Meta) -> Result<bool, Box<dyn Error>> {
-    let result = meta.info.match_hash(index, hash)?;
-    Ok(result)
 }

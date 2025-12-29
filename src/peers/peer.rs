@@ -34,10 +34,16 @@ impl Peer {
         let mut resp = Handshake::default();
         stream.read_exact(resp.as_mut())?;
 
-        Ok(PeerConnection {
+        let mut conn = PeerConnection {
             peer_id: resp.peer_id(),
             stream,
-        })
+        };
+
+        conn.wait_for_bitfield()?;
+        conn.send_interested()?;
+        conn.wait_for_unchoke()?;
+
+        Ok(conn)
     }
 }
 
@@ -277,9 +283,9 @@ fn send_message(stream: &mut TcpStream, msg: PeerMessage) -> Result<()> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Download {
-    index: u32,
-    block: Vec<u8>,
+pub struct Download {
+    pub index: u32,
+    pub block: Vec<u8>,
 }
 
 impl std::cmp::PartialOrd for Download {

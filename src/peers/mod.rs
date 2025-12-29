@@ -1,4 +1,4 @@
 mod message;
 mod peer;
 
-pub use peer::{Peer, PeerConnection};
+pub use peer::{Download, Peer, PeerConnection};
