@@ -1,7 +1,7 @@
 use crate::{
     BitTorrentError, Result,
     bencode::Bencode,
-    util::{HASH_SIZE, Hash20},
+    util::{HASH_SIZE, Bytes20},
 };
 
 use serde::Serialize;
@@ -16,12 +16,12 @@ pub struct Info {
 }
 
 impl Info {
-    pub fn piece_hashes(&self) -> Result<Vec<Hash20>> {
+    pub fn piece_hashes(&self) -> Result<Vec<Bytes20>> {
         let hashes = self
             .pieces
             .as_str()?
             .chunks(HASH_SIZE)
-            .map(Hash20::from)
+            .map(Bytes20::from)
             .collect();
         Ok(hashes)
     }

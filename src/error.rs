@@ -31,4 +31,7 @@ pub enum BitTorrentError {
 
     #[error("Url parse Error: {0}")]
     UrlParseError(#[from] url::ParseError),
+
+    #[error("Address parse Error: {0}")]
+    AddrParseError(#[from] std::net::AddrParseError),
 }

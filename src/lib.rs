@@ -2,6 +2,7 @@ pub mod bencode;
 mod cli;
 mod error;
 pub mod file;
+pub mod peer;
 pub mod tracker;
 pub mod util;
 

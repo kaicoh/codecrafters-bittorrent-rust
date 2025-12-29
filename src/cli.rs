@@ -11,4 +11,5 @@ pub enum Command {
     Decode { token: String },
     Info { path: String },
     Peers { path: String },
+    Handshake { path: String, address: String },
 }

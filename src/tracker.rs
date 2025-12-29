@@ -1,12 +1,7 @@
-use crate::{BitTorrentError, Result, bencode::Bencode, util::Hash20};
+use crate::{BitTorrentError, Result, bencode::Bencode, peer::Peer, util::Bytes20};
 
 use std::borrow::Cow;
-use std::fmt;
-use std::net::{Ipv4Addr, SocketAddrV4};
 use url::EncodingOverride;
-
-// 4 bytes for IP, 2 bytes for port
-const PEER_SIZE: usize = 6;
 
 macro_rules! err {
     ($msg:expr) => {
@@ -35,7 +30,7 @@ impl TrackerRequest {
 #[derive(Debug, Clone, Default)]
 pub struct TrackerRequestBuilder {
     url: Option<String>,
-    info_hash: Option<Hash20>,
+    info_hash: Option<Bytes20>,
     peer_id: Option<String>,
     port: Option<u16>,
     uploaded: Option<u64>,
@@ -105,7 +100,7 @@ impl TrackerRequestBuilder {
 
     pub fn info_hash<T: AsRef<[u8]>>(self, info_hash: T) -> Self {
         Self {
-            info_hash: Some(Hash20::from(info_hash.as_ref())),
+            info_hash: Some(Bytes20::from(info_hash.as_ref())),
             ..self
         }
     }
@@ -132,52 +127,5 @@ impl TryFrom<&Bencode> for TrackerResponse {
         let interval = dict.get_int("interval")? as u64;
         let peers = dict.get("peers")?.try_into()?;
         Ok(Self { interval, peers })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Peer(SocketAddrV4);
-
-impl TryFrom<&Bencode> for Vec<Peer> {
-    type Error = BitTorrentError;
-
-    fn try_from(value: &Bencode) -> Result<Self> {
-        let peers = value
-            .as_str()?
-            .chunks(PEER_SIZE)
-            .filter_map(|chunk| {
-                if chunk.len() == PEER_SIZE {
-                    let mut bytes = [0u8; PEER_SIZE];
-                    bytes.copy_from_slice(chunk);
-                    let [b0, b1, b2, b3, b4, b5] = bytes;
-
-                    let ip = Ipv4Addr::new(b0, b1, b2, b3);
-                    let port = u16::from_be_bytes([b4, b5]);
-
-                    Some(Peer(SocketAddrV4::new(ip, port)))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(peers)
-    }
-}
-
-impl fmt::Display for Peer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_display_peer() {
-        let peer = Peer(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8080));
-        assert_eq!(peer.to_string(), "127.0.0.1:8080");
     }
 }
