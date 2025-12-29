@@ -30,6 +30,11 @@ impl Info {
         let num_pieces = self.pieces.as_str()?.len() / HASH_SIZE;
         Ok(num_pieces)
     }
+
+    pub fn match_hash(&self, index: usize, hash: &Bytes20) -> Result<bool> {
+        let result = self.piece_hashes()?.get(index).is_some_and(|h| h == hash);
+        Ok(result)
+    }
 }
 
 impl TryFrom<&Bencode> for Info {

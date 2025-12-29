@@ -189,7 +189,7 @@ impl TryFrom<&[u8]> for PeerMessage {
                     block,
                 }
             }
-            _ => bail!("Unknown message ID"),
+            _ => bail!("Unknown message ID: {id}"),
         };
 
         Ok(msg)

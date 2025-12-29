@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 pub const HASH_SIZE: usize = 20;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Bytes20([u8; HASH_SIZE]);
 
 impl From<&[u8]> for Bytes20 {
