@@ -13,6 +13,8 @@ use sha1::{Digest, Sha1};
 use std::error::Error;
 use std::str::FromStr;
 
+const MAX_ATTEMPTS: u8 = 5;
+
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
@@ -82,8 +84,21 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             let length = get_piece_length(index, &meta)?;
 
-            let piece_data = conn.download_piece(index, length as u32).await?;
-            std::fs::write(output, piece_data)?;
+            let mut attempts = 0;
+
+            while attempts < MAX_ATTEMPTS {
+                let piece_data = conn.download_piece(index, length as u32).await?;
+                let hash = sha1_hash(&piece_data);
+
+                if match_hash(index as usize, &hash, &meta)? {
+                    std::fs::write(output, piece_data)?;
+                    println!("Piece {index} downloaded and verified.");
+                    break;
+                } else {
+                    attempts += 1;
+                    println!("Hash mismatch for piece {index}. Attempt {attempts}/{MAX_ATTEMPTS}.",);
+                }
+            }
         }
         Command::Download { output, path } => {
             let meta = get_meta(&path)?;
@@ -103,9 +118,24 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             for index in 0..num_pieces {
                 let length = get_piece_length(index as u32, &meta)?;
-                let piece_data = conn.download_piece(index as u32, length as u32).await?;
-                file_data.extend_from_slice(&piece_data);
-                println!("Downloaded piece {}/{}", index + 1, num_pieces);
+                let mut attempts = 0;
+
+                while attempts < MAX_ATTEMPTS {
+                    let piece_data = conn.download_piece(index as u32, length as u32).await?;
+                    let hash = sha1_hash(&piece_data);
+
+                    if match_hash(index, &hash, &meta)? {
+                        file_data.extend_from_slice(&piece_data);
+                        println!("Downloaded and verified piece {}/{num_pieces}", index + 1);
+                        break;
+                    } else {
+                        attempts += 1;
+                        println!(
+                            "Hash mismatch for piece {}. Attempt {attempts}/{MAX_ATTEMPTS}.",
+                            index + 1,
+                        );
+                    }
+                }
             }
 
             std::fs::write(output, file_data)?;
@@ -153,4 +183,14 @@ fn get_piece_length(index: u32, meta: &Meta) -> Result<u32, Box<dyn Error>> {
         piece_length as usize
     };
     Ok(length as u32)
+}
+
+fn sha1_hash(bytes: &[u8]) -> Bytes20 {
+    let digest = Sha1::digest(bytes);
+    Bytes20::from(digest.as_ref())
+}
+
+fn match_hash(index: usize, hash: &Bytes20, meta: &Meta) -> Result<bool, Box<dyn Error>> {
+    let result = meta.info.match_hash(index, hash)?;
+    Ok(result)
 }

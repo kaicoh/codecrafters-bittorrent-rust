@@ -17,7 +17,7 @@ const PIPELINE_SIZE: usize = 5;
 
 macro_rules! bail {
     ($msg:expr) => {
-        return Err(BitTorrentError::InvalidPeerMessage($msg))
+        return Err(BitTorrentError::InvalidPeerMessage(format!($msg)))
     };
 }
 

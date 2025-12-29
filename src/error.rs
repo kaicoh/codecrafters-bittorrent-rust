@@ -36,7 +36,7 @@ pub enum BitTorrentError {
     AddrParseError(#[from] std::net::AddrParseError),
 
     #[error("Invalid peer message: {0}")]
-    InvalidPeerMessage(&'static str),
+    InvalidPeerMessage(String),
 
     #[error("Oneshot send error: reciver dropped")]
     OneshotSendError,
