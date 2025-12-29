@@ -7,9 +7,25 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
+#[command(rename_all = "snake_case")]
 pub enum Command {
-    Decode { token: String },
-    Info { path: String },
-    Peers { path: String },
-    Handshake { path: String, address: String },
+    Decode {
+        token: String,
+    },
+    Info {
+        path: String,
+    },
+    Peers {
+        path: String,
+    },
+    Handshake {
+        path: String,
+        address: String,
+    },
+    DownloadPiece {
+        #[arg(short, long)]
+        output: String,
+        path: String,
+        index: u32,
+    },
 }

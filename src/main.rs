@@ -78,8 +78,50 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let info_hash = Bytes20::from(Sha1::digest(&bytes).as_ref());
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
-            let resp = Peer::from_str(&address)?.handshake(info_hash, peer_id)?;
-            println!("Peer ID: {}", resp.peer_id().hex_encoded());
+            let conn = Peer::from_str(&address)?.connect(info_hash, peer_id)?;
+            println!("Peer ID: {}", conn.peer_id().hex_encoded());
+        }
+        Command::DownloadPiece {
+            output,
+            path,
+            index,
+        } => {
+            let encoded = Bencode::from_path(path)?;
+            let meta_info = bit::file::MetaInfo::try_from(&encoded)?;
+
+            let mut bytes = Vec::new();
+            meta_info.info.serialize(&mut Serializer::new(&mut bytes))?;
+            let info_hash = Bytes20::from(Sha1::digest(&bytes).as_ref());
+            let peer_id = Bytes20::new(*b"-CT0001-012345678901");
+
+            let resp = TrackerRequest::builder()
+                .url(meta_info.announce)
+                .info_hash(info_hash)
+                .left(meta_info.info.length)
+                .build()?
+                .send()
+                .await?;
+
+            let peer = resp.peers.first().ok_or("No peers found")?;
+            let mut conn = peer.connect(info_hash, peer_id)?;
+
+            conn.wait_for_bitfield()?;
+            conn.send_interested()?;
+            conn.wait_for_unchoke()?;
+
+            let piece_length = meta_info.info.piece_length;
+            let last_piece_length = (meta_info.info.length % piece_length as u64) as usize;
+            let is_last_piece = (index as usize) == (meta_info.info.num_pieces()? - 1);
+
+            let length = if is_last_piece {
+                last_piece_length
+            } else {
+                piece_length as usize
+            };
+
+            let piece_data = conn.download_piece(index, length as u32)?;
+
+            std::fs::write(output, piece_data)?;
         }
     }
 

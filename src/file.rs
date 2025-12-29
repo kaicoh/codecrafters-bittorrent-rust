@@ -1,7 +1,7 @@
 use crate::{
     BitTorrentError, Result,
     bencode::Bencode,
-    util::{HASH_SIZE, Bytes20},
+    util::{Bytes20, HASH_SIZE},
 };
 
 use serde::Serialize;
@@ -9,7 +9,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct Info {
     #[serde(rename = "piece length")]
-    pub piece_length: u64,
+    pub piece_length: u32,
     pub pieces: Bencode,
     pub name: String,
     pub length: u64,
@@ -25,6 +25,11 @@ impl Info {
             .collect();
         Ok(hashes)
     }
+
+    pub fn num_pieces(&self) -> Result<usize> {
+        let num_pieces = self.pieces.as_str()?.len() / HASH_SIZE;
+        Ok(num_pieces)
+    }
 }
 
 impl TryFrom<&Bencode> for Info {
@@ -33,7 +38,7 @@ impl TryFrom<&Bencode> for Info {
     fn try_from(bencode: &Bencode) -> Result<Self> {
         let dict = bencode.as_dict()?;
 
-        let piece_length = dict.get_int("piece length")? as u64;
+        let piece_length = dict.get_int("piece length")? as u32;
         let pieces_bytes = dict.get_bytes("pieces")?.to_vec();
         let name = dict.get_str("name")?.to_string();
         let length = dict.get_int("length")? as u64;

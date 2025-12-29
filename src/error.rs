@@ -34,4 +34,7 @@ pub enum BitTorrentError {
 
     #[error("Address parse Error: {0}")]
     AddrParseError(#[from] std::net::AddrParseError),
+
+    #[error("Invalid peer message: {0}")]
+    InvalidPeerMessage(&'static str),
 }
