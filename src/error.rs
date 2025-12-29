@@ -28,4 +28,7 @@ pub enum BitTorrentError {
 
     #[error("Reqwest Error: {0}")]
     ReqwestError(#[from] reqwest::Error),
+
+    #[error("Url parse Error: {0}")]
+    UrlParseError(#[from] url::ParseError),
 }

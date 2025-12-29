@@ -1,7 +1,9 @@
 use crate::{BitTorrentError, Result, bencode::Bencode, util::Hash20};
-use serde::Serialize;
+
+use std::borrow::Cow;
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use url::EncodingOverride;
 
 // 4 bytes for IP, 2 bytes for port
 const PEER_SIZE: usize = 6;
@@ -44,23 +46,53 @@ pub struct TrackerRequestBuilder {
 
 impl TrackerRequestBuilder {
     pub fn build(self) -> Result<TrackerRequest> {
-        let url = self.url.ok_or(err!("url is required by RequestBuilder"))?;
-        let query = QueryParams {
-            info_hash: self
-                .info_hash
-                .ok_or(err!("info_hash is required by RequestBuilder"))?,
-            peer_id: self.peer_id.unwrap_or("01234567890123456789".to_string()),
-            port: self.port.unwrap_or(6881),
-            uploaded: self.uploaded.unwrap_or(0),
-            downloaded: self.downloaded.unwrap_or(0),
-            left: self
-                .left
-                .ok_or(err!("left is required by RequestBuilder"))?,
-            compact: self.compact.unwrap_or(1),
-        };
+        let mut url = self
+            .url
+            .as_deref()
+            .map(reqwest::Url::parse)
+            .transpose()?
+            .ok_or(err!("url is required by RequestBuilder"))?;
 
-        let req =
-            reqwest::Client::new().get(format!("{url}?{}", serde_urlencoded::to_string(&query)?));
+        let info_hash = self
+            .info_hash
+            .ok_or(err!("info_hash is required by RequestBuilder"))?;
+
+        let unsafe_hash_str = unsafe { std::str::from_utf8_unchecked(info_hash.as_ref()) };
+
+        let peer_id = self.peer_id.as_deref().unwrap_or("01234567890123456789");
+
+        let port = self.port.unwrap_or(6881).to_string();
+        let uploaded = self.uploaded.unwrap_or(0).to_string();
+        let downloaded = self.downloaded.unwrap_or(0).to_string();
+
+        let left = self
+            .left
+            .ok_or(err!("left is required by RequestBuilder"))?
+            .to_string();
+
+        let compact = self.compact.unwrap_or(1).to_string();
+
+        let encoding: EncodingOverride<'_> = Some(&|v| {
+            if v == unsafe_hash_str {
+                Cow::Owned(v.as_bytes().to_vec())
+            } else {
+                Cow::Borrowed(v.as_bytes())
+            }
+        });
+
+        let url = url
+            .query_pairs_mut()
+            .encoding_override(encoding)
+            .append_pair("info_hash", unsafe_hash_str)
+            .append_pair("peer_id", peer_id)
+            .append_pair("port", &port)
+            .append_pair("uploaded", &uploaded)
+            .append_pair("downloaded", &downloaded)
+            .append_pair("left", &left)
+            .append_pair("compact", &compact)
+            .finish();
+
+        let req = reqwest::Client::new().get(url.as_str());
         Ok(TrackerRequest { inner: req })
     }
 
@@ -84,17 +116,6 @@ impl TrackerRequestBuilder {
             ..self
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct QueryParams {
-    info_hash: Hash20,
-    peer_id: String,
-    port: u16,
-    uploaded: u64,
-    downloaded: u64,
-    left: u64,
-    compact: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +152,7 @@ impl TryFrom<&Bencode> for Vec<Peer> {
                     let [b0, b1, b2, b3, b4, b5] = bytes;
 
                     let ip = Ipv4Addr::new(b0, b1, b2, b3);
-                    let port = u16::from_ne_bytes([b4, b5]);
+                    let port = u16::from_be_bytes([b4, b5]);
 
                     Some(Peer(SocketAddrV4::new(ip, port)))
                 } else {
