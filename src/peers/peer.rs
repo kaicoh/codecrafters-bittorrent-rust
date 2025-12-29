@@ -1,16 +1,19 @@
 use super::message::{MessageBuf, PeerMessage};
 use crate::{BitTorrentError, Result, bencode::Bencode, util::Bytes20};
 
+use std::cmp;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
+use tokio::sync::oneshot;
 
 // 4 bytes for IP, 2 bytes for port
 const PEER_SIZE: usize = 6;
 // 16KB
 const BLOCK_SIZE: usize = 16 * 1024;
+const PIPELINE_SIZE: usize = 5;
 
 macro_rules! bail {
     ($msg:expr) => {
@@ -150,31 +153,6 @@ impl PeerConnection {
         self.peer_id
     }
 
-    pub fn read_message(&mut self) -> Result<PeerMessage> {
-        let mut buf = MessageBuf::new();
-
-        loop {
-            let mut temp_buf = [0u8; 4096];
-            let n = self.stream.read(&mut temp_buf)?;
-
-            if n == 0 {
-                bail!("Connection closed by peer");
-            }
-
-            buf.write_all(&temp_buf[..n])?;
-
-            if let Some(msg_result) = buf.build_if_ready() {
-                return msg_result;
-            }
-        }
-    }
-
-    pub fn send_message(&mut self, msg: PeerMessage) -> Result<()> {
-        let bytes = msg.into_bytes();
-        self.stream.write_all(&bytes)?;
-        Ok(())
-    }
-
     pub fn wait_for_bitfield(&mut self) -> Result<Vec<u8>> {
         loop {
             let msg = self.read_message()?;
@@ -198,38 +176,121 @@ impl PeerConnection {
         }
     }
 
-    pub fn download_piece(&mut self, index: u32, piece_length: u32) -> Result<Vec<u8>> {
-        let mut downloaded = vec![0u8; piece_length as usize];
+    pub async fn download_piece(&mut self, index: u32, piece_length: u32) -> Result<Vec<u8>> {
         let mut offset = 0;
+        let mut tasks = tokio::task::JoinSet::<Download>::new();
+        let mut triggers: Vec<oneshot::Sender<()>> = Vec::new();
 
         while offset < piece_length {
-            let block_size = std::cmp::min(BLOCK_SIZE as u32, piece_length - offset);
-            let request_msg = PeerMessage::Request {
-                index,
-                begin: offset,
-                length: block_size,
-            };
-            self.send_message(request_msg)?;
+            let block_size = cmp::min(BLOCK_SIZE as u32, piece_length - offset);
 
-            loop {
-                let msg = self.read_message()?;
-                if let PeerMessage::Piece {
-                    index: msg_index,
-                    begin,
-                    block,
-                } = msg
-                    && msg_index == index
-                    && begin == offset
-                {
-                    downloaded[offset as usize..(offset + block_size) as usize]
-                        .copy_from_slice(&block);
-                    offset += block_size;
-                    break;
+            let (tx, rx) = oneshot::channel::<()>();
+            triggers.push(tx);
+
+            let mut stream = self.stream.try_clone()?;
+
+            tasks.spawn(async move {
+                rx.await.expect("Failed to receive signal");
+
+                let request_msg = PeerMessage::Request {
+                    index,
+                    begin: offset,
+                    length: block_size,
+                };
+                send_message(&mut stream, request_msg).expect("Failed to send request message");
+
+                loop {
+                    let msg = read_message(&mut stream).expect("Failed to read message");
+                    if let PeerMessage::Piece {
+                        index: msg_index,
+                        begin,
+                        block,
+                    } = msg
+                        && msg_index == index
+                        && begin == offset
+                    {
+                        return Download { index, block };
+                    }
                 }
+            });
+
+            offset += block_size;
+        }
+
+        let channel_count = cmp::min(triggers.len(), PIPELINE_SIZE);
+
+        let mut downloads: Vec<Download> = Vec::new();
+        let mut trigger_iter = triggers.into_iter();
+
+        for _ in 0..channel_count {
+            if let Some(tx) = trigger_iter.next() {
+                tx.send(()).map_err(|_| BitTorrentError::OneshotSendError)?;
             }
         }
 
-        Ok(downloaded)
+        while let Some(res) = tasks.join_next().await {
+            let download = res?;
+            downloads.push(download);
+
+            if let Some(tx) = trigger_iter.next() {
+                tx.send(()).map_err(|_| BitTorrentError::OneshotSendError)?;
+            }
+        }
+
+        downloads.sort();
+
+        Ok(downloads.into_iter().flat_map(|d| d.block).collect())
+    }
+
+    fn read_message(&mut self) -> Result<PeerMessage> {
+        read_message(&mut self.stream)
+    }
+
+    fn send_message(&mut self, msg: PeerMessage) -> Result<()> {
+        send_message(&mut self.stream, msg)
+    }
+}
+
+fn read_message(stream: &mut TcpStream) -> Result<PeerMessage> {
+    let mut buf = MessageBuf::new();
+
+    loop {
+        let mut temp_buf = [0u8; 4096];
+        let n = stream.read(&mut temp_buf)?;
+
+        if n == 0 {
+            bail!("Connection closed by peer");
+        }
+
+        buf.write_all(&temp_buf[..n])?;
+
+        if let Some(msg_result) = buf.build_if_ready() {
+            return msg_result;
+        }
+    }
+}
+
+fn send_message(stream: &mut TcpStream, msg: PeerMessage) -> Result<()> {
+    let bytes = msg.into_bytes();
+    stream.write_all(&bytes)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Download {
+    index: u32,
+    block: Vec<u8>,
+}
+
+impl std::cmp::PartialOrd for Download {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::cmp::Ord for Download {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.index.cmp(&other.index)
     }
 }
 

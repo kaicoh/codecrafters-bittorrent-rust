@@ -82,7 +82,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             let length = get_piece_length(index, &meta)?;
 
-            let piece_data = conn.download_piece(index, length as u32)?;
+            let piece_data = conn.download_piece(index, length as u32).await?;
             std::fs::write(output, piece_data)?;
         }
         Command::Download { output, path } => {
@@ -103,7 +103,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             for index in 0..num_pieces {
                 let length = get_piece_length(index as u32, &meta)?;
-                let piece_data = conn.download_piece(index as u32, length as u32)?;
+                let piece_data = conn.download_piece(index as u32, length as u32).await?;
                 file_data.extend_from_slice(&piece_data);
                 println!("Downloaded piece {}/{}", index + 1, num_pieces);
             }
