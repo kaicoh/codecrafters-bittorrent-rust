@@ -85,6 +85,31 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let piece_data = conn.download_piece(index, length as u32)?;
             std::fs::write(output, piece_data)?;
         }
+        Command::Download { output, path } => {
+            let meta = get_meta(&path)?;
+            let info_hash = get_info_hash(&meta)?;
+            let peer_id = Bytes20::new(*b"-CT0001-012345678901");
+
+            let resp = get_tracker_response(&info_hash, &meta).await?;
+            let peer = resp.peers.first().ok_or("No peers found")?;
+            let mut conn = peer.connect(info_hash, peer_id)?;
+
+            conn.wait_for_bitfield()?;
+            conn.send_interested()?;
+            conn.wait_for_unchoke()?;
+
+            let num_pieces = meta.info.num_pieces()?;
+            let mut file_data = Vec::new();
+
+            for index in 0..num_pieces {
+                let length = get_piece_length(index as u32, &meta)?;
+                let piece_data = conn.download_piece(index as u32, length as u32)?;
+                file_data.extend_from_slice(&piece_data);
+                println!("Downloaded piece {}/{}", index + 1, num_pieces);
+            }
+
+            std::fs::write(output, file_data)?;
+        }
     }
 
     Ok(())

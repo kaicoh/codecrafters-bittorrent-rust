@@ -28,4 +28,9 @@ pub enum Command {
         path: String,
         index: u32,
     },
+    Download {
+        #[arg(short, long)]
+        output: String,
+        path: String,
+    },
 }
