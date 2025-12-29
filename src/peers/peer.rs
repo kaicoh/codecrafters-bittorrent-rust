@@ -1,3 +1,4 @@
+use super::message::{MessageBuf, PeerMessage};
 use crate::{BitTorrentError, Result, bencode::Bencode, util::Bytes20};
 
 use std::fmt;
@@ -8,18 +9,12 @@ use std::str::FromStr;
 
 // 4 bytes for IP, 2 bytes for port
 const PEER_SIZE: usize = 6;
+// 16KB
+const BLOCK_SIZE: usize = 16 * 1024;
 
 macro_rules! bail {
     ($msg:expr) => {
         return Err(BitTorrentError::InvalidPeerMessage($msg))
-    };
-}
-
-macro_rules! ensure {
-    ($cond:expr, $msg:expr) => {
-        if !$cond {
-            bail!($msg);
-        }
     };
 }
 
@@ -88,7 +83,7 @@ impl fmt::Display for Peer {
 const HANDSHAKE_SIZE: usize = 68;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Handshake([u8; HANDSHAKE_SIZE]);
+pub(crate) struct Handshake([u8; HANDSHAKE_SIZE]);
 
 impl Default for Handshake {
     fn default() -> Self {
@@ -97,7 +92,7 @@ impl Default for Handshake {
 }
 
 impl Handshake {
-    pub fn new(info_hash: Bytes20, peer_id: Bytes20) -> Self {
+    pub(crate) fn new(info_hash: Bytes20, peer_id: Bytes20) -> Self {
         let mut bytes = [0u8; HANDSHAKE_SIZE];
         bytes[0] = 19; // Length of protocol string
         bytes[1..20].copy_from_slice(b"BitTorrent protocol");
@@ -107,15 +102,7 @@ impl Handshake {
         Self(bytes)
     }
 
-    pub fn as_bytes(&self) -> &[u8; HANDSHAKE_SIZE] {
-        self.deref()
-    }
-
-    pub fn info_hash(&self) -> Bytes20 {
-        Bytes20::from(&self.0[28..48])
-    }
-
-    pub fn peer_id(&self) -> Bytes20 {
+    pub(crate) fn peer_id(&self) -> Bytes20 {
         Bytes20::from(&self.0[48..68])
     }
 }
@@ -244,193 +231,6 @@ impl PeerConnection {
 
         Ok(downloaded)
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct MessageBuf(Vec<u8>);
-
-impl MessageBuf {
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    pub fn build_if_ready(&self) -> Option<Result<PeerMessage>> {
-        if self.0.len() < 4 {
-            return None;
-        }
-
-        let mut bytes: [u8; 4] = [0u8; 4];
-        bytes.copy_from_slice(&self.0[0..4]);
-
-        let length = u32::from_be_bytes(bytes) as usize;
-
-        if self.0.len() < length + 4 {
-            return None;
-        }
-
-        let msg = &self.0[4..4 + length];
-
-        Some(PeerMessage::try_from(msg))
-    }
-}
-
-impl AsRef<[u8]> for MessageBuf {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl Deref for MessageBuf {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for MessageBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl io::Write for MessageBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-const MESSAGE_ID_UNCHOKE: u8 = 1;
-const MESSAGE_ID_INTERESTED: u8 = 2;
-const MESSAGE_ID_BITFIELD: u8 = 5;
-const MESSAGE_ID_REQUEST: u8 = 6;
-const MESSAGE_ID_PIECE: u8 = 7;
-
-const BLOCK_SIZE: usize = 16 * 1024; // 16 KB
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PeerMessage {
-    Unchoke,
-    Interested,
-    Bitfield(Vec<u8>),
-    Request {
-        index: u32,
-        begin: u32,
-        length: u32,
-    },
-    Piece {
-        index: u32,
-        begin: u32,
-        block: Vec<u8>,
-    },
-}
-
-impl PeerMessage {
-    pub fn into_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-
-        match self {
-            PeerMessage::Unchoke => {
-                bytes.extend_from_slice(&1u32.to_be_bytes());
-                bytes.push(MESSAGE_ID_UNCHOKE);
-            }
-            PeerMessage::Interested => {
-                bytes.extend_from_slice(&1u32.to_be_bytes());
-                bytes.push(MESSAGE_ID_INTERESTED);
-            }
-            PeerMessage::Bitfield(bitfield) => {
-                let length = 1 + bitfield.len() as u32;
-                bytes.extend_from_slice(&length.to_be_bytes());
-                bytes.push(MESSAGE_ID_BITFIELD);
-                bytes.extend_from_slice(&bitfield);
-            }
-            PeerMessage::Request {
-                index,
-                begin,
-                length,
-            } => {
-                bytes.extend_from_slice(&13u32.to_be_bytes());
-                bytes.push(MESSAGE_ID_REQUEST);
-                bytes.extend_from_slice(&index.to_be_bytes());
-                bytes.extend_from_slice(&begin.to_be_bytes());
-                bytes.extend_from_slice(&length.to_be_bytes());
-            }
-            PeerMessage::Piece {
-                index,
-                begin,
-                block,
-            } => {
-                let length = 1 + 8 + block.len() as u32;
-                bytes.extend_from_slice(&length.to_be_bytes());
-                bytes.push(MESSAGE_ID_PIECE);
-                bytes.extend_from_slice(&index.to_be_bytes());
-                bytes.extend_from_slice(&begin.to_be_bytes());
-                bytes.extend_from_slice(&block);
-            }
-        }
-
-        bytes
-    }
-}
-
-impl TryFrom<&[u8]> for PeerMessage {
-    type Error = BitTorrentError;
-
-    fn try_from(bytes: &[u8]) -> Result<Self> {
-        ensure!(!bytes.is_empty(), "Message too short");
-
-        let id = bytes[0];
-        let payload = &bytes[1..];
-
-        let msg = match id {
-            MESSAGE_ID_UNCHOKE => PeerMessage::Unchoke,
-            MESSAGE_ID_INTERESTED => PeerMessage::Interested,
-            MESSAGE_ID_BITFIELD => PeerMessage::Bitfield(payload.to_vec()),
-            MESSAGE_ID_REQUEST => {
-                ensure!(
-                    payload.len() == 12,
-                    "Invalid Request message payload length"
-                );
-
-                let index = u32_from_bytes(&payload[..4]);
-                let begin = u32_from_bytes(&payload[4..8]);
-                let length = u32_from_bytes(&payload[8..12]);
-
-                PeerMessage::Request {
-                    index,
-                    begin,
-                    length,
-                }
-            }
-            MESSAGE_ID_PIECE => {
-                ensure!(payload.len() >= 8, "Invalid Piece message payload length");
-
-                let index = u32_from_bytes(&payload[..4]);
-                let begin = u32_from_bytes(&payload[4..8]);
-                let block = payload[8..].to_vec();
-
-                PeerMessage::Piece {
-                    index,
-                    begin,
-                    block,
-                }
-            }
-            _ => bail!("Unknown message ID"),
-        };
-
-        Ok(msg)
-    }
-}
-
-fn u32_from_bytes(bytes: &[u8]) -> u32 {
-    let mut array = [0u8; 4];
-    array.copy_from_slice(&bytes[0..4]);
-    u32::from_be_bytes(array)
 }
 
 #[cfg(test)]

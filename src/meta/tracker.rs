@@ -1,4 +1,4 @@
-use crate::{BitTorrentError, Result, bencode::Bencode, peer::Peer, util::Bytes20};
+use crate::{BitTorrentError, Result, bencode::Bencode, peers::Peer, util::Bytes20};
 
 use std::borrow::Cow;
 use url::EncodingOverride;

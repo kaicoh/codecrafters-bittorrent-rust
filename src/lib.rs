@@ -1,9 +1,8 @@
 pub mod bencode;
 mod cli;
 mod error;
-pub mod file;
-pub mod peer;
-pub mod tracker;
+pub mod meta;
+pub mod peers;
 pub mod util;
 
 pub use cli::{Cli, Command};

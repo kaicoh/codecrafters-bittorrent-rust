@@ -3,8 +3,8 @@ use codecrafters_bittorrent as bit;
 use bit::{
     Cli, Command,
     bencode::{Bencode, Serializer},
-    peer::Peer,
-    tracker::TrackerRequest,
+    meta::{Meta, TrackerRequest, TrackerResponse},
+    peers::Peer,
     util::Bytes20,
 };
 use clap::Parser;
@@ -30,12 +30,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
             println!("{v}");
         }
         Command::Info { path } => {
-            let meta_info = get_metainfo(&path)?;
-            println!("Tracker URL: {}", meta_info.announce);
-            println!("Length: {}", meta_info.info.length);
+            let meta = get_meta(&path)?;
+            println!("Tracker URL: {}", meta.announce);
+            println!("Length: {}", meta.info.length);
 
-            let info_hash = get_info_hash(&meta_info)?;
-            let info = meta_info.info;
+            let info_hash = get_info_hash(&meta)?;
+            let info = meta.info;
 
             println!("Info Hash: {}", info_hash.hex_encoded());
             println!("Piece Length: {}", info.piece_length);
@@ -46,24 +46,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Command::Peers { path } => {
-            let meta_info = get_metainfo(&path)?;
-            let info_hash = get_info_hash(&meta_info)?;
+            let meta = get_meta(&path)?;
+            let info_hash = get_info_hash(&meta)?;
 
-            let resp = TrackerRequest::builder()
-                .url(meta_info.announce)
-                .info_hash(info_hash)
-                .left(meta_info.info.length)
-                .build()?
-                .send()
-                .await?;
+            let resp = get_tracker_response(&info_hash, &meta).await?;
 
             for peer in resp.peers {
                 println!("{peer}");
             }
         }
         Command::Handshake { path, address } => {
-            let meta_info = get_metainfo(&path)?;
-            let info_hash = get_info_hash(&meta_info)?;
+            let meta = get_meta(&path)?;
+            let info_hash = get_info_hash(&meta)?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let conn = Peer::from_str(&address)?.connect(info_hash, peer_id)?;
@@ -74,18 +68,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
             path,
             index,
         } => {
-            let meta_info = get_metainfo(&path)?;
-            let info_hash = get_info_hash(&meta_info)?;
+            let meta = get_meta(&path)?;
+            let info_hash = get_info_hash(&meta)?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
-            let resp = TrackerRequest::builder()
-                .url(&meta_info.announce)
-                .info_hash(info_hash)
-                .left(meta_info.info.length)
-                .build()?
-                .send()
-                .await?;
-
+            let resp = get_tracker_response(&info_hash, &meta).await?;
             let peer = resp.peers.first().ok_or("No peers found")?;
             let mut conn = peer.connect(info_hash, peer_id)?;
 
@@ -93,7 +80,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             conn.send_interested()?;
             conn.wait_for_unchoke()?;
 
-            let length = get_piece_length(index, &meta_info)?;
+            let length = get_piece_length(index, &meta)?;
 
             let piece_data = conn.download_piece(index, length as u32)?;
             std::fs::write(output, piece_data)?;
@@ -103,23 +90,37 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn get_metainfo(path: &str) -> Result<bit::file::MetaInfo, Box<dyn Error>> {
+fn get_meta(path: &str) -> Result<Meta, Box<dyn Error>> {
     let encoded = Bencode::from_path(path)?;
-    let meta_info = bit::file::MetaInfo::try_from(&encoded)?;
+    let meta_info = Meta::try_from(&encoded)?;
     Ok(meta_info)
 }
 
-fn get_info_hash(meta_info: &bit::file::MetaInfo) -> Result<Bytes20, Box<dyn Error>> {
+fn get_info_hash(meta: &Meta) -> Result<Bytes20, Box<dyn Error>> {
     let mut bytes = Vec::new();
-    meta_info.info.serialize(&mut Serializer::new(&mut bytes))?;
+    meta.info.serialize(&mut Serializer::new(&mut bytes))?;
     let info_hash = Bytes20::from(Sha1::digest(&bytes).as_ref());
     Ok(info_hash)
 }
 
-fn get_piece_length(index: u32, meta_info: &bit::file::MetaInfo) -> Result<u32, Box<dyn Error>> {
-    let piece_length = meta_info.info.piece_length;
-    let last_piece_length = (meta_info.info.length % piece_length as u64) as usize;
-    let is_last_piece = (index as usize) == (meta_info.info.num_pieces()? - 1);
+async fn get_tracker_response(
+    hash: &Bytes20,
+    meta: &Meta,
+) -> Result<TrackerResponse, Box<dyn Error>> {
+    let resp = TrackerRequest::builder()
+        .url(&meta.announce)
+        .info_hash(hash)
+        .left(meta.info.length)
+        .build()?
+        .send()
+        .await?;
+    Ok(resp)
+}
+
+fn get_piece_length(index: u32, meta: &Meta) -> Result<u32, Box<dyn Error>> {
+    let piece_length = meta.info.piece_length;
+    let last_piece_length = (meta.info.length % piece_length as u64) as usize;
+    let is_last_piece = (index as usize) == (meta.info.num_pieces()? - 1);
 
     let length = if is_last_piece {
         last_piece_length

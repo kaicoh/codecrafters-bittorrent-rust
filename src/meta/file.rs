@@ -53,12 +53,12 @@ impl TryFrom<&Bencode> for Info {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct MetaInfo {
+pub struct Meta {
     pub announce: String,
     pub info: Info,
 }
 
-impl TryFrom<&Bencode> for MetaInfo {
+impl TryFrom<&Bencode> for Meta {
     type Error = BitTorrentError;
 
     fn try_from(bencode: &Bencode) -> Result<Self> {
@@ -68,7 +68,7 @@ impl TryFrom<&Bencode> for MetaInfo {
         let info_bencode = dict.get("info")?;
         let info = Info::try_from(info_bencode)?;
 
-        Ok(MetaInfo { announce, info })
+        Ok(Self { announce, info })
     }
 }
 
