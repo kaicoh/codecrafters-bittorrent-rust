@@ -77,7 +77,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
-            let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
+            let mut pool = Pool::from_iter(resp.peers);
 
             let length = get_piece_length(index, &meta)?;
             let piece_hash = meta
@@ -90,21 +90,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let mut attempts = 0;
 
             while attempts < MAX_ATTEMPTS {
-                let peer = {
-                    let mut pool = pool.lock().await;
-                    pool.get_item().await
-                };
+                let peer = pool.get_item().await;
+                let mut conn = peer.connect(info_hash, peer_id)?;
 
-                let piece_data = peer
-                    .connect(info_hash, peer_id)?
-                    .download_piece(index, length as u32)
-                    .await?;
+                conn.ready()?;
+
+                let piece_data = conn.download_piece(index, length as u32).await?;
 
                 let hash = sha1_hash(&piece_data);
 
                 if piece_hash == hash {
                     std::fs::write(output, piece_data)?;
-                    println!("Piece {index} downloaded and verified.");
+                    println!("🎉 Piece {index} downloaded and verified.");
                     break;
                 } else {
                     attempts += 1;
@@ -120,24 +117,28 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let resp = get_tracker_response(&info_hash, &meta).await?;
             println!("Found {} peers", resp.peers.len());
 
+            for (i, peer) in resp.peers.iter().enumerate() {
+                println!("Peer {}: {peer}", i + 1);
+            }
+
             let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
 
-            let num_pieces = meta.info.num_pieces()?;
+            println!("Piece Length: {}", meta.info.piece_length);
+            let hashes = meta.info.piece_hashes()?;
+            for h in &hashes {
+                println!("Piece hash: {}", h.hex_encoded());
+            }
+
+            let num_pieces = hashes.len();
+
             let mut downloads: Vec<Download> = Vec::new();
             let mut tasks = tokio::task::JoinSet::<Download>::new();
 
-            for index in 0..num_pieces {
+            for (index, h) in hashes.into_iter().enumerate() {
                 let mut attempts = 0;
 
                 let length = get_piece_length(index as u32, &meta)?;
-                let piece_hash = meta
-                    .info
-                    .piece_hashes()?
-                    .get(index)
-                    .copied()
-                    .ok_or("Invalid piece index")?;
-
-                let pool = pool.clone();
+                let pool = Arc::clone(&pool);
 
                 tasks.spawn(async move {
                     while attempts < MAX_ATTEMPTS {
@@ -145,19 +146,32 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             let mut pool = pool.lock().await;
                             pool.get_item().await
                         };
-                        println!("Get peer for piece {}", index + 1);
 
-                        let piece_data = peer
+                        let mut conn = peer
                             .connect(info_hash, peer_id)
-                            .expect("Failed to connect to peer")
+                            .expect("Failed to connect to peer");
+
+                        conn.ready().expect("Failed to ready connection");
+
+                        let piece_data = conn
                             .download_piece(index as u32, length as u32)
                             .await
                             .expect("Failed to download piece");
 
+                        println!(
+                            "Downloaded piece {}/{} from Peer: {peer}. Length: {}",
+                            index + 1,
+                            num_pieces,
+                            piece_data.len()
+                        );
+
                         let hash = sha1_hash(&piece_data);
 
-                        if piece_hash == hash {
-                            println!("Downloaded and verified piece {}/{num_pieces}", index + 1);
+                        if h == hash {
+                            println!(
+                                "🎉 Downloaded and verified piece {}/{num_pieces}",
+                                index + 1
+                            );
 
                             return Download {
                                 index: index as u32,
@@ -165,9 +179,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             };
                         } else {
                             attempts += 1;
+
                             println!(
-                                "Hash mismatch for piece {}. Attempt {attempts}/{MAX_ATTEMPTS}.",
+                                "🤔 Hash mismatch for piece {}. Expected {}, got {}. Retrying {attempts}/{MAX_ATTEMPTS}",
                                 index + 1,
+                                h.hex_encoded(),
+                                hash.hex_encoded()
                             );
                         }
                     }

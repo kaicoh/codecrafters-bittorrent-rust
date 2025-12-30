@@ -34,14 +34,10 @@ impl Peer {
         let mut resp = Handshake::default();
         stream.read_exact(resp.as_mut())?;
 
-        let mut conn = PeerConnection {
+        let conn = PeerConnection {
             peer_id: resp.peer_id(),
             stream,
         };
-
-        conn.wait_for_bitfield()?;
-        conn.send_interested()?;
-        conn.wait_for_unchoke()?;
 
         Ok(conn)
     }
@@ -155,6 +151,12 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
+    pub fn ready(&mut self) -> Result<()> {
+        self.wait_for_bitfield()?;
+        self.send_interested()?;
+        self.wait_for_unchoke()
+    }
+
     pub fn peer_id(&self) -> Bytes20 {
         self.peer_id
     }
