@@ -77,6 +77,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
+            println!("Found {} peers", resp.peers.len());
+
+            for (i, peer) in resp.peers.iter().enumerate() {
+                println!("Peer {}: {peer}", i + 1);
+            }
+
             let mut pool = Pool::from_iter(resp.peers);
 
             let length = get_piece_length(index, &meta)?;
@@ -86,6 +92,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 .get(index as usize)
                 .copied()
                 .ok_or("Invalid piece index")?;
+            println!(
+                "Expected hash for piece {index}: {}",
+                piece_hash.hex_encoded()
+            );
 
             let mut attempts = 0;
 
@@ -96,8 +106,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 conn.ready()?;
 
                 let piece_data = conn.download_piece(index, length as u32).await?;
-
                 let hash = sha1_hash(&piece_data);
+                println!(
+                    "Downloaded piece {index} from Peer: {peer}. Length: {}. Hash: {}",
+                    piece_data.len(),
+                    hash.hex_encoded()
+                );
 
                 if piece_hash == hash {
                     std::fs::write(output, piece_data)?;
@@ -107,6 +121,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     attempts += 1;
                     println!("Hash mismatch for piece {index}. Attempt {attempts}/{MAX_ATTEMPTS}.",);
                 }
+            }
+
+            if attempts == MAX_ATTEMPTS {
+                return Err(format!(
+                    "Failed to download piece {index} after {MAX_ATTEMPTS} attempts"
+                )
+                .into());
             }
         }
         Command::Download { output, path } => {
