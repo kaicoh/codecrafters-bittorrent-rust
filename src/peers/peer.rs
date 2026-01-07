@@ -217,7 +217,10 @@ impl PeerConnection {
                         && msg_index == index
                         && begin == offset
                     {
-                        return Download { index, block };
+                        return Download {
+                            index: begin,
+                            block,
+                        };
                     }
                 }
             });
