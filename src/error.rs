@@ -20,6 +20,9 @@ pub enum BitTorrentError {
     #[error("Serde Error: {0}")]
     SerdeError(String),
 
+    #[error("Deserialization Error: {0}")]
+    DeserdeError(String),
+
     #[error("UrlEncodeError: {0}")]
     UrlEncodeError(#[from] serde_urlencoded::ser::Error),
 

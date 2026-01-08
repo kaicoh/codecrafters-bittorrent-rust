@@ -34,7 +34,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             println!("{v}");
         }
         Command::Info { path } => {
-            let meta = get_meta(&path)?;
+            let meta = Meta::from_path(&path)?;
             println!("Tracker URL: {}", meta.announce);
             println!("Length: {}", meta.info.length);
 
@@ -45,12 +45,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
             println!("Piece Length: {}", info.piece_length);
             println!("Piece Hashes:");
 
-            for hash in info.piece_hashes()? {
+            for hash in info.piece_hashes() {
                 println!("{}", hash.hex_encoded());
             }
         }
         Command::Peers { path } => {
-            let meta = get_meta(&path)?;
+            let meta = Meta::from_path(&path)?;
             let info_hash = get_info_hash(&meta)?;
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
@@ -60,7 +60,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Command::Handshake { path, address } => {
-            let meta = get_meta(&path)?;
+            let meta = Meta::from_path(&path)?;
             let info_hash = get_info_hash(&meta)?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
@@ -72,14 +72,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
             path,
             index,
         } => {
-            let meta = get_meta(&path)?;
+            let meta = Meta::from_path(&path)?;
             let info_hash = get_info_hash(&meta)?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
-            println!("Found {} peers", resp.peers.len());
+            println!("Found {} peers", resp.peers.as_ref().len());
 
-            for (i, peer) in resp.peers.iter().enumerate() {
+            for (i, peer) in resp.peers.as_ref().iter().enumerate() {
                 println!("Peer {}: {peer}", i + 1);
             }
 
@@ -88,10 +88,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let length = get_piece_length(index, &meta)?;
             let piece_hash = meta
                 .info
-                .piece_hashes()?
+                .piece_hashes()
                 .get(index as usize)
                 .copied()
-                .ok_or("Invalid piece index")?;
+                .ok_or_else(|| format!("Invalid piece index: {index}"))?;
             println!(
                 "Expected hash for piece {index}: {}",
                 piece_hash.hex_encoded()
@@ -131,22 +131,22 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Command::Download { output, path } => {
-            let meta = get_meta(&path)?;
+            let meta = Meta::from_path(&path)?;
             let info_hash = get_info_hash(&meta)?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
-            println!("Found {} peers", resp.peers.len());
+            println!("Found {} peers", resp.peers.as_ref().len());
 
-            for (i, peer) in resp.peers.iter().enumerate() {
+            for (i, peer) in resp.peers.as_ref().iter().enumerate() {
                 println!("Peer {}: {peer}", i + 1);
             }
 
             let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
 
             println!("Piece Length: {}", meta.info.piece_length);
-            let hashes = meta.info.piece_hashes()?;
-            for h in &hashes {
+            let hashes = meta.info.piece_hashes();
+            for h in hashes {
                 println!("Piece hash: {}", h.hex_encoded());
             }
 
@@ -155,8 +155,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let mut downloads: Vec<Download> = Vec::new();
             let mut tasks = tokio::task::JoinSet::<Download>::new();
 
-            for (index, h) in hashes.into_iter().enumerate() {
+            for (index, h) in hashes.iter().enumerate() {
                 let mut attempts = 0;
+                let h = *h;
 
                 let length = get_piece_length(index as u32, &meta)?;
                 let pool = Arc::clone(&pool);
@@ -236,12 +237,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn get_meta(path: &str) -> Result<Meta, Box<dyn Error>> {
-    let encoded = Bencode::from_path(path)?;
-    let meta_info = Meta::try_from(&encoded)?;
-    Ok(meta_info)
-}
-
 fn get_info_hash(meta: &Meta) -> Result<Bytes20, Box<dyn Error>> {
     let mut bytes = Vec::new();
     meta.info.serialize(&mut Serializer::new(&mut bytes))?;
@@ -266,7 +261,7 @@ async fn get_tracker_response(
 fn get_piece_length(index: u32, meta: &Meta) -> Result<u32, Box<dyn Error>> {
     let piece_length = meta.info.piece_length;
     let last_piece_length = (meta.info.length % piece_length as u64) as usize;
-    let is_last_piece = (index as usize) == (meta.info.num_pieces()? - 1);
+    let is_last_piece = (index as usize) == (meta.info.num_pieces() - 1);
 
     let length = if is_last_piece {
         last_piece_length

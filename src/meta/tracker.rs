@@ -1,6 +1,13 @@
-use crate::{BitTorrentError, Result, bencode::Bencode, peers::Peer, util::Bytes20};
+use crate::{
+    BitTorrentError, Result,
+    bencode::{ByteSeqVisitor, Deserializer},
+    peers::{PEER_SIZE, Peer},
+    util::Bytes20,
+};
 
+use serde::{Deserialize, de};
 use std::borrow::Cow;
+use std::ops::Deref;
 use url::EncodingOverride;
 
 macro_rules! err {
@@ -21,8 +28,8 @@ impl TrackerRequest {
 
     pub async fn send(self) -> Result<TrackerResponse> {
         let resp = self.inner.send().await?.bytes().await?;
-        let bencode = Bencode::parse(&resp)?;
-        let response = TrackerResponse::try_from(&bencode)?;
+        let mut de = Deserializer::new(resp.deref());
+        let response = Deserialize::deserialize(&mut de)?;
         Ok(response)
     }
 }
@@ -113,19 +120,37 @@ impl TrackerRequestBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TrackerResponse {
     pub interval: u64,
-    pub peers: Vec<Peer>,
+    pub peers: Peers,
 }
 
-impl TryFrom<&Bencode> for TrackerResponse {
-    type Error = BitTorrentError;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Peers(Vec<Peer>);
 
-    fn try_from(value: &Bencode) -> Result<Self> {
-        let dict = value.as_dict()?;
-        let interval = dict.get_int("interval")? as u64;
-        let peers = dict.get("peers")?.try_into()?;
-        Ok(Self { interval, peers })
+impl AsRef<[Peer]> for Peers {
+    fn as_ref(&self) -> &[Peer] {
+        &self.0
+    }
+}
+
+impl<'de> de::Deserialize<'de> for Peers {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        let visitor = ByteSeqVisitor::new(PEER_SIZE);
+        let vec = deserializer.deserialize_bytes(visitor)?;
+        Ok(Self(vec))
+    }
+}
+
+impl IntoIterator for Peers {
+    type Item = Peer;
+    type IntoIter = std::vec::IntoIter<Peer>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }

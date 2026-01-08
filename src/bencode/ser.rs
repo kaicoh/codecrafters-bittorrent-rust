@@ -1,12 +1,40 @@
-use super::BitTorrentError;
+use super::{Bencode, BitTorrentError};
 
-use serde::ser::{self, Error as SerdeError};
+use serde::ser::{self, Error as SerdeError, SerializeMap as SerdeMap, SerializeSeq as SerdeSeq};
 use std::collections::HashMap;
 use std::io;
 
 impl SerdeError for BitTorrentError {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
         BitTorrentError::SerdeError(format!("{msg}"))
+    }
+}
+
+impl ser::Serialize for Bencode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: ser::Serializer,
+    {
+        match self {
+            Bencode::Str(v) => serializer.serialize_bytes(v),
+            Bencode::Int(v) => serializer.serialize_i64(*v),
+            Bencode::List(vals) => {
+                let mut seq = serializer.serialize_seq(Some(vals.len()))?;
+                for val in vals {
+                    seq.serialize_element(val)?;
+                }
+                seq.end()
+            }
+            Bencode::Dict(map) => {
+                let mut ser_map = serializer.serialize_map(Some(map.len()))?;
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                for key in keys {
+                    ser_map.serialize_entry(key, &map[key])?;
+                }
+                ser_map.end()
+            }
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::BitTorrentError;
 use std::ops::Deref;
 
 pub const HASH_SIZE: usize = 20;
@@ -13,6 +14,23 @@ impl From<&[u8]> for Bytes20 {
     }
 }
 
+impl TryFrom<Vec<u8>> for Bytes20 {
+    type Error = BitTorrentError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        if value.len() != HASH_SIZE {
+            return Err(BitTorrentError::DeserdeError(format!(
+                "Invalid length for Bytes20: expected {}, got {}",
+                HASH_SIZE,
+                value.len()
+            )));
+        }
+        let mut array = [0u8; HASH_SIZE];
+        array.copy_from_slice(&value);
+        Ok(Bytes20(array))
+    }
+}
+
 impl Bytes20 {
     pub fn new(bytes: [u8; HASH_SIZE]) -> Self {
         Bytes20(bytes)
@@ -20,6 +38,14 @@ impl Bytes20 {
 
     pub fn hex_encoded(&self) -> String {
         hex::encode(self.0)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

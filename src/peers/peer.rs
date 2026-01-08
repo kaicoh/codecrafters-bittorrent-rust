@@ -1,5 +1,5 @@
 use super::message::{MessageBuf, PeerMessage};
-use crate::{BitTorrentError, Result, bencode::Bencode, util::Bytes20};
+use crate::{BitTorrentError, Result, util::Bytes20};
 
 use std::cmp;
 use std::fmt;
@@ -10,7 +10,7 @@ use std::str::FromStr;
 use tokio::sync::oneshot;
 
 // 4 bytes for IP, 2 bytes for port
-const PEER_SIZE: usize = 6;
+pub(crate) const PEER_SIZE: usize = 6;
 // 16KB
 const BLOCK_SIZE: usize = 16 * 1024;
 const PIPELINE_SIZE: usize = 5;
@@ -21,7 +21,7 @@ macro_rules! bail {
     };
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Peer(SocketAddrV4);
 
 impl Peer {
@@ -52,30 +52,26 @@ impl FromStr for Peer {
     }
 }
 
-impl TryFrom<&Bencode> for Vec<Peer> {
+impl TryFrom<Vec<u8>> for Peer {
     type Error = BitTorrentError;
 
-    fn try_from(value: &Bencode) -> Result<Self> {
-        let peers = value
-            .as_str()?
-            .chunks(PEER_SIZE)
-            .filter_map(|chunk| {
-                if chunk.len() == PEER_SIZE {
-                    let mut bytes = [0u8; PEER_SIZE];
-                    bytes.copy_from_slice(chunk);
-                    let [b0, b1, b2, b3, b4, b5] = bytes;
+    fn try_from(value: Vec<u8>) -> Result<Self> {
+        if value.len() != PEER_SIZE {
+            return Err(BitTorrentError::DeserdeError(format!(
+                "Invalid length for Peer: expected {}, got {}",
+                PEER_SIZE,
+                value.len()
+            )));
+        }
 
-                    let ip = Ipv4Addr::new(b0, b1, b2, b3);
-                    let port = u16::from_be_bytes([b4, b5]);
+        let [b0, b1, b2, b3, b4, b5] = <[u8; PEER_SIZE]>::try_from(value).map_err(|_| {
+            BitTorrentError::DeserdeError("Failed to convert to Peer bytes".to_string())
+        })?;
 
-                    Some(Peer(SocketAddrV4::new(ip, port)))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let ip = Ipv4Addr::new(b0, b1, b2, b3);
+        let port = u16::from_be_bytes([b4, b5]);
 
-        Ok(peers)
+        Ok(Peer(SocketAddrV4::new(ip, port)))
     }
 }
 
