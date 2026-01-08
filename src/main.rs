@@ -49,8 +49,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         Command::Peers { path } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = meta.info.hash()?;
-            let resp = get_tracker_response(&info_hash, &meta).await?;
+            let resp = get_tracker_response(&meta).await?;
 
             for peer in resp.peers {
                 println!("{peer}");
@@ -73,7 +72,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let info_hash = meta.info.hash()?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
-            let resp = get_tracker_response(&info_hash, &meta).await?;
+            let resp = get_tracker_response(&meta).await?;
             println!("Found {} peers", resp.peers.as_ref().len());
 
             for (i, peer) in resp.peers.as_ref().iter().enumerate() {
@@ -82,7 +81,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             let mut pool = Pool::from_iter(resp.peers);
 
-            let length = get_piece_length(index, &meta)?;
+            let length = meta.piece_length(index as usize);
             let piece_hash = meta
                 .info
                 .piece_hashes()
@@ -132,7 +131,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let info_hash = meta.info.hash()?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
-            let resp = get_tracker_response(&info_hash, &meta).await?;
+            let resp = get_tracker_response(&meta).await?;
             println!("Found {} peers", resp.peers.as_ref().len());
 
             for (i, peer) in resp.peers.as_ref().iter().enumerate() {
@@ -156,7 +155,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 let mut attempts = 0;
                 let h = *h;
 
-                let length = get_piece_length(index as u32, &meta)?;
+                let length = meta.piece_length(index);
                 let pool = Arc::clone(&pool);
 
                 tasks.spawn(async move {
@@ -234,31 +233,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn get_tracker_response(
-    hash: &Bytes20,
-    meta: &Meta,
-) -> Result<TrackerResponse, Box<dyn Error>> {
+async fn get_tracker_response(meta: &Meta) -> Result<TrackerResponse, Box<dyn Error>> {
     let resp = TrackerRequest::builder()
         .url(&meta.announce)
-        .info_hash(hash)
+        .info_hash(meta.info.hash()?)
         .left(meta.info.length)
         .build()?
         .send()
         .await?;
     Ok(resp)
-}
-
-fn get_piece_length(index: u32, meta: &Meta) -> Result<u32, Box<dyn Error>> {
-    let piece_length = meta.info.piece_length;
-    let last_piece_length = (meta.info.length % piece_length as u64) as usize;
-    let is_last_piece = (index as usize) == (meta.info.num_pieces() - 1);
-
-    let length = if is_last_piece {
-        last_piece_length
-    } else {
-        piece_length as usize
-    };
-    Ok(length as u32)
 }
 
 fn sha1_hash(bytes: &[u8]) -> Bytes20 {

@@ -86,6 +86,22 @@ impl Meta {
         let meta = Meta::deserialize(&mut de)?;
         Ok(meta)
     }
+
+    pub fn piece_hashes(&self) -> &[Bytes20] {
+        self.info.piece_hashes()
+    }
+
+    pub fn piece_length(&self, index: usize) -> usize {
+        let piece_length = self.info.piece_length as usize;
+        let last_piece_length = (self.info.length % piece_length as u64) as usize;
+        let is_last_piece = index == (self.info.num_pieces() - 1);
+
+        if is_last_piece {
+            last_piece_length
+        } else {
+            piece_length
+        }
+    }
 }
 
 #[cfg(test)]
