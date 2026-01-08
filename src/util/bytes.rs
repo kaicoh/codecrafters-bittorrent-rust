@@ -1,4 +1,5 @@
 use crate::BitTorrentError;
+use sha1::{Digest, Sha1};
 use std::ops::Deref;
 
 pub const HASH_SIZE: usize = 20;
@@ -46,6 +47,11 @@ impl Bytes20 {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn sha1_hash(data: &[u8]) -> Self {
+        let digest = Sha1::digest(data);
+        Bytes20::from(digest.as_ref())
     }
 }
 

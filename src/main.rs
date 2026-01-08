@@ -8,7 +8,6 @@ use bit::{
     util::{Bytes20, Pool},
 };
 use clap::Parser;
-use sha1::{Digest, Sha1};
 use std::error::Error;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -102,7 +101,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 conn.ready()?;
 
                 let piece_data = conn.download_piece(index, length as u32).await?;
-                let hash = sha1_hash(&piece_data);
+                let hash = Bytes20::sha1_hash(&piece_data);
                 println!(
                     "Downloaded piece {index} from Peer: {peer}. Length: {}. Hash: {}",
                     piece_data.len(),
@@ -141,7 +140,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
 
             println!("Piece Length: {}", meta.info.piece_length);
-            let hashes = meta.info.piece_hashes();
+            let hashes = meta.piece_hashes();
             for h in hashes {
                 println!("Piece hash: {}", h.hex_encoded());
             }
@@ -183,7 +182,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             piece_data.len()
                         );
 
-                        let hash = sha1_hash(&piece_data);
+                        let hash = Bytes20::sha1_hash(&piece_data);
 
                         if h == hash {
                             println!(
@@ -242,9 +241,4 @@ async fn get_tracker_response(meta: &Meta) -> Result<TrackerResponse, Box<dyn Er
         .send()
         .await?;
     Ok(resp)
-}
-
-fn sha1_hash(bytes: &[u8]) -> Bytes20 {
-    let digest = Sha1::digest(bytes);
-    Bytes20::from(digest.as_ref())
 }
