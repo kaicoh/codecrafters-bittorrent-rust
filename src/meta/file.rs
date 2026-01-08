@@ -1,10 +1,11 @@
 use crate::{
     BitTorrentError,
-    bencode::{ByteSeqVisitor, Deserializer},
+    bencode::{ByteSeqVisitor, Deserializer, Serializer},
     util::{Bytes20, HASH_SIZE},
 };
 
 use serde::{Deserialize, Serialize, de, ser};
+use sha1::{Digest, Sha1};
 use std::fs;
 use std::path::Path;
 
@@ -62,6 +63,13 @@ impl Info {
 
     pub fn match_hash(&self, index: usize, hash: &Bytes20) -> bool {
         self.piece_hashes().get(index).is_some_and(|h| h == hash)
+    }
+
+    pub fn hash(&self) -> Result<Bytes20, BitTorrentError> {
+        let mut bytes = Vec::new();
+        self.serialize(&mut Serializer::new(&mut bytes))?;
+        let digest = Sha1::digest(&bytes);
+        Ok(Bytes20::from(digest.as_ref()))
     }
 }
 

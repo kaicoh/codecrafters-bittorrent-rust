@@ -2,13 +2,12 @@ use codecrafters_bittorrent as bit;
 
 use bit::{
     Cli, Command,
-    bencode::{Bencode, Serializer},
+    bencode::Bencode,
     meta::{Meta, TrackerRequest, TrackerResponse},
     peers::{Download, Peer},
     util::{Bytes20, Pool},
 };
 use clap::Parser;
-use serde::Serialize;
 use sha1::{Digest, Sha1};
 use std::error::Error;
 use std::str::FromStr;
@@ -38,10 +37,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
             println!("Tracker URL: {}", meta.announce);
             println!("Length: {}", meta.info.length);
 
-            let info_hash = get_info_hash(&meta)?;
             let info = meta.info;
 
-            println!("Info Hash: {}", info_hash.hex_encoded());
+            println!("Info Hash: {}", info.hash()?.hex_encoded());
             println!("Piece Length: {}", info.piece_length);
             println!("Piece Hashes:");
 
@@ -51,8 +49,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         Command::Peers { path } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = get_info_hash(&meta)?;
-
+            let info_hash = meta.info.hash()?;
             let resp = get_tracker_response(&info_hash, &meta).await?;
 
             for peer in resp.peers {
@@ -61,7 +58,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         Command::Handshake { path, address } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = get_info_hash(&meta)?;
+            let info_hash = meta.info.hash()?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let conn = Peer::from_str(&address)?.connect(info_hash, peer_id)?;
@@ -73,7 +70,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             index,
         } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = get_info_hash(&meta)?;
+            let info_hash = meta.info.hash()?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
@@ -132,7 +129,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         Command::Download { output, path } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = get_info_hash(&meta)?;
+            let info_hash = meta.info.hash()?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
             let resp = get_tracker_response(&info_hash, &meta).await?;
@@ -235,13 +232,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
-}
-
-fn get_info_hash(meta: &Meta) -> Result<Bytes20, Box<dyn Error>> {
-    let mut bytes = Vec::new();
-    meta.info.serialize(&mut Serializer::new(&mut bytes))?;
-    let info_hash = Bytes20::from(Sha1::digest(&bytes).as_ref());
-    Ok(info_hash)
 }
 
 async fn get_tracker_response(
