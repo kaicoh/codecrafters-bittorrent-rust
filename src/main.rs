@@ -137,7 +137,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 println!("Peer {}: {peer}", i + 1);
             }
 
-            let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
+            let peer_len = resp.peers.as_ref().len();
+
+            //let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
 
             println!("Piece Length: {}", meta.info.piece_length);
             let hashes = meta.piece_hashes();
@@ -155,14 +157,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 let h = *h;
 
                 let length = meta.piece_length(index);
-                let pool = Arc::clone(&pool);
+                //let pool = Arc::clone(&pool);
+                let peer = resp.peers.as_ref()[index % peer_len].clone();
 
                 tasks.spawn(async move {
                     while attempts < MAX_ATTEMPTS {
-                        let peer = {
-                            let mut pool = pool.lock().await;
-                            pool.get_item().await
-                        };
+                        //let peer = {
+                        //    let mut pool = pool.lock().await;
+                        //    pool.get_item().await
+                        //};
 
                         let mut conn = peer
                             .connect(info_hash, peer_id)
