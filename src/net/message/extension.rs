@@ -18,6 +18,7 @@ pub fn is_extension_message(id: u8) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Extension {
     Handshake(HashMap<String, Bencode>),
+    RequestMetadata { ext_id: u8, piece: u32 },
 }
 
 impl Extension {
@@ -32,33 +33,44 @@ impl Extension {
                     None
                 }
             }
+            Self::RequestMetadata { ext_id, .. } => Some(*ext_id),
         }
     }
 }
 
 impl AsBytes for Extension {
     fn as_bytes(&self) -> Result<Bytes> {
-        let bytes = match self {
+        let mut dict_bytes = Vec::new();
+        let mut serializer = BencodeSerializer::new(&mut dict_bytes);
+
+        match self {
             Self::Handshake(dict) => {
-                let mut dict_bytes = Vec::new();
-                let mut serializer = BencodeSerializer::new(&mut dict_bytes);
                 dict.serialize(&mut serializer)?;
-
-                // 1 for message ID
-                // 1 for extended message ID
-                let length = (dict_bytes.len() + 2) as u32;
-
-                length
-                    .to_be_bytes()
-                    .iter()
-                    .chain(&[20u8, 0u8]) // message ID and extended message ID
-                    .chain(&dict_bytes)
-                    .cloned()
-                    .collect()
+            }
+            Self::RequestMetadata { piece, .. } => {
+                let mut dict = HashMap::new();
+                dict.insert("msg_type".to_string(), Bencode::Int(0)); // request
+                dict.insert("piece".to_string(), Bencode::Int(*piece as i64));
+                dict.serialize(&mut serializer)?;
             }
         };
 
-        Ok(bytes)
+        // 1 for message ID
+        // 1 for extended message ID
+        let length = (dict_bytes.len() + 2) as u32;
+
+        let ext_id = match self {
+            Self::Handshake(_) => MESSAGE_ID_EXTENSION_HANDSHAKE,
+            Self::RequestMetadata { ext_id, .. } => *ext_id,
+        };
+
+        Ok(length
+            .to_be_bytes()
+            .iter()
+            .chain(&[MESSAGE_ID_EXTENSION, ext_id]) // message ID and extended message ID
+            .chain(&dict_bytes)
+            .cloned()
+            .collect())
     }
 }
 
