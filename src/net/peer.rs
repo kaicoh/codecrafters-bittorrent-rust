@@ -164,7 +164,7 @@ impl PeerStream {
             .await
     }
 
-    async fn wait_message<P>(&mut self, predicate: P) -> Result<Message>
+    pub async fn wait_message<P>(&mut self, predicate: P) -> Result<Message>
     where
         P: Fn(&Message) -> bool,
     {
