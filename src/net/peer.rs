@@ -1,19 +1,17 @@
 use crate::{BitTorrentError, Result, util::Bytes20};
 
-use super::message::{PeerMessage, PeerMessageDecoder};
+use super::message::{AsBytes, Message, MessageDecoder, PeerMessage};
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
 use std::str::FromStr;
-use std::task::{Context, Poll};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{
     TcpStream,
     tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::StreamExt;
 use tokio_util::codec::FramedRead;
 
 pub const PEER_BYTE_SIZE: usize = 6;
@@ -119,14 +117,14 @@ impl fmt::Display for Peer {
 #[derive(Debug)]
 pub struct PeerStream {
     peer_id: Bytes20,
-    pub(crate) reader: FramedRead<OwnedReadHalf, PeerMessageDecoder>,
+    pub(crate) reader: FramedRead<OwnedReadHalf, MessageDecoder>,
     pub(crate) writer: OwnedWriteHalf,
 }
 
 impl PeerStream {
     pub fn new(peer_id: Bytes20, stream: TcpStream) -> Self {
         let (read_half, write_half) = stream.into_split();
-        let reader = FramedRead::new(read_half, PeerMessageDecoder);
+        let reader = FramedRead::new(read_half, MessageDecoder);
 
         Self {
             peer_id,
@@ -146,27 +144,29 @@ impl PeerStream {
         Ok(())
     }
 
-    async fn send_message(&mut self, msg: PeerMessage) -> Result<()> {
-        let bytes = msg.into_bytes();
+    pub async fn send_message<T: AsBytes>(&mut self, msg: T) -> Result<()> {
+        let bytes = msg.as_bytes()?;
         self.writer.write_all(&bytes).await?;
         Ok(())
     }
 
-    async fn wait_bitfield(&mut self) -> Result<PeerMessage> {
-        self.wait_message(PeerMessage::is_bitfield).await
+    pub async fn wait_bitfield(&mut self) -> Result<Message> {
+        self.wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_bitfield))
+            .await
     }
 
     async fn send_interested(&mut self) -> Result<()> {
         self.send_message(PeerMessage::Interested).await
     }
 
-    async fn wait_unchoke(&mut self) -> Result<PeerMessage> {
-        self.wait_message(PeerMessage::is_unchoke).await
+    async fn wait_unchoke(&mut self) -> Result<Message> {
+        self.wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_unchoke))
+            .await
     }
 
-    async fn wait_message<P>(&mut self, predicate: P) -> Result<PeerMessage>
+    async fn wait_message<P>(&mut self, predicate: P) -> Result<Message>
     where
-        P: Fn(&PeerMessage) -> bool,
+        P: Fn(&Message) -> bool,
     {
         while let Some(msg) = self.reader.next().await {
             let msg = msg?;
@@ -175,14 +175,5 @@ impl PeerStream {
             }
         }
         Err(BitTorrentError::ConnectionClosed)
-    }
-}
-
-impl Stream for PeerStream {
-    type Item = Result<PeerMessage>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        Pin::new(&mut this.reader).poll_next(cx)
     }
 }

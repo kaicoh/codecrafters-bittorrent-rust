@@ -1,6 +1,6 @@
 use crate::util::{KeyHash, ThrottleQueue};
 
-use super::{PeerMessage, PeerStream, Piece, PieceManager};
+use super::{AsBytes, Message, PeerMessage, PeerStream, Piece, PieceManager};
 
 use std::future::Future;
 use std::pin::Pin;
@@ -58,14 +58,16 @@ pub fn create(stream: PeerStream) -> (Broker, Receiver<Piece>) {
                 }
             };
 
-            let mut queue = queue_pointer.lock().await;
-            queue.done(msg.key_hash()).await;
+            if let Some(peer_msg) = msg.as_peer_message() {
+                let mut queue = queue_pointer.lock().await;
+                queue.done(peer_msg.key_hash()).await;
+            }
 
-            if let PeerMessage::Piece {
+            if let Message::PeerMessage(PeerMessage::Piece {
                 index,
                 begin,
                 block,
-            } = msg
+            }) = msg
             {
                 debug!(
                     "Received piece message: index={}, begin={}, block_length={}",
@@ -135,7 +137,14 @@ fn send_message(writer: Arc<Mutex<OwnedWriteHalf>>) -> PeerMessageSender {
         let writer = Arc::clone(&writer);
 
         Box::pin(async move {
-            let bytes = msg.into_bytes();
+            let bytes = match msg.as_bytes() {
+                Ok(b) => b,
+                Err(err) => {
+                    error!("Failed to serialize message: {err}");
+                    return;
+                }
+            };
+
             let mut writer = writer.lock().await;
             if let Err(err) = writer.write_all(&bytes).await {
                 error!("Failed to send message: {err}");
