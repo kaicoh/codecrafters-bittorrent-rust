@@ -2,6 +2,7 @@ use crate::{BitTorrentError, Result};
 
 use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
+use tracing::debug;
 
 type Index = usize;
 type Offset = usize;
@@ -82,7 +83,7 @@ impl PieceManager {
         if self.blocks.get(&index).is_some_and(|b| b.is_complete())
             && let Some(piece) = self.blocks.remove(&index).and_then(|b| b.into_piece())
         {
-            println!("Piece {index} completed.");
+            debug!("Piece {index} completed.");
 
             self.sender
                 .send(piece)

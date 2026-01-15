@@ -23,4 +23,6 @@ thiserror = "1.0.38"                                               # error handl
 tokio = { version = "1.49.0", features = ["full"] }                # async http requests
 tokio-stream = "0.1.18"
 tokio-util = { version = "0.7.18", features = ["codec"] }          # for working with tokio streams
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter"] } # logging
 url = "2.5.7"

@@ -2,6 +2,7 @@ use crate::{meta::Meta, net::Piece};
 
 use super::utils;
 use std::error::Error;
+use tracing::debug;
 
 pub(crate) async fn run(output: String, path: String) -> Result<(), Box<dyn Error>> {
     let meta = Meta::from_path(&path)?;
@@ -18,7 +19,7 @@ pub(crate) async fn run(output: String, path: String) -> Result<(), Box<dyn Erro
 
     while let Some(piece) = piece_rx.recv().await {
         pieces.push(piece);
-        println!("Downloaded piece {}/{}", pieces.len(), hashes.len());
+        debug!("Downloaded piece {}/{}", pieces.len(), hashes.len());
 
         if pieces.len() == hashes.len() {
             break;

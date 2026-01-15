@@ -2,6 +2,7 @@ use crate::{meta::Meta, util::Bytes20};
 
 use super::utils;
 use std::error::Error;
+use tracing::info;
 
 pub(crate) async fn run(output: String, path: String, index: u32) -> Result<(), Box<dyn Error>> {
     let meta = Meta::from_path(&path)?;
@@ -16,12 +17,12 @@ pub(crate) async fn run(output: String, path: String, index: u32) -> Result<(), 
         .copied()
         .ok_or_else(|| format!("Invalid piece index: {index}"))?;
 
-    println!("Downloading piece {index}...");
+    info!("Downloading piece {index}...");
 
     let broker = brokers.get_item();
     broker.request_piece(index as usize, length).await;
 
-    println!("Waiting for piece {index} data...");
+    info!("Waiting for piece {index} data...");
 
     if let Some(piece) = piece_rx.recv().await {
         let hash = Bytes20::sha1_hash(&piece.data);
@@ -29,7 +30,7 @@ pub(crate) async fn run(output: String, path: String, index: u32) -> Result<(), 
         if piece_hash == hash {
             std::fs::write(output, piece.data)?;
 
-            println!("🎉 Piece {index} downloaded and verified.");
+            info!("🎉 Piece {index} downloaded and verified.");
 
             return Ok(());
         } else {

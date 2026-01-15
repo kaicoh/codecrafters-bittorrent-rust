@@ -12,6 +12,7 @@ use tokio::sync::{
     mpsc::{self, Receiver},
 };
 use tokio_stream::StreamExt;
+use tracing::{debug, error};
 
 const BLOCK_SIZE: usize = 16 * 1024;
 const THROTTLE_CAPACITY: usize = 5;
@@ -53,7 +54,7 @@ impl Broker {
                 let msg = match msg {
                     Ok(msg) => msg,
                     Err(e) => {
-                        eprintln!("Failed to read message: {e}");
+                        error!("Failed to read message: {e}");
                         break;
                     }
                 };
@@ -67,7 +68,7 @@ impl Broker {
                     block,
                 } = msg
                 {
-                    println!(
+                    debug!(
                         "Received piece message: index={}, begin={}, block_length={}",
                         index,
                         begin,
@@ -79,7 +80,7 @@ impl Broker {
                         .insert_block(index as usize, begin as usize, block)
                         .await
                     {
-                        eprintln!("Failed to insert block: {err}");
+                        error!("Failed to insert block: {err}");
                         break;
                     }
                 }
@@ -129,7 +130,7 @@ fn send_message(writer: Arc<Mutex<OwnedWriteHalf>>) -> PeerMessageSender {
             let bytes = msg.into_bytes();
             let mut writer = writer.lock().await;
             if let Err(err) = writer.write_all(&bytes).await {
-                eprintln!("Failed to send message: {err}");
+                error!("Failed to send message: {err}");
             }
         })
     })

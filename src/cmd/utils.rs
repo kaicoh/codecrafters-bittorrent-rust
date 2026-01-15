@@ -5,6 +5,7 @@ use crate::{
     util::{Bytes20, RotationPool},
 };
 use tokio::sync::mpsc::{self, Receiver};
+use tracing::info;
 
 pub(crate) async fn get_response(meta: &Meta) -> Result<TrackerResponse> {
     let resp = TrackerRequest::builder()
@@ -22,10 +23,10 @@ pub(crate) async fn get_brokers(meta: &Meta) -> Result<(RotationPool<Broker>, Re
     let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
     let resp = get_response(meta).await?;
-    println!("Found {} peers", resp.peers.as_ref().len());
+    info!("Found {} peers", resp.peers.as_ref().len());
 
     for (i, peer) in resp.peers.as_ref().iter().enumerate() {
-        println!("Peer {}: {peer}", i + 1);
+        info!("Peer {}: {peer}", i + 1);
     }
 
     let mut brokers: Vec<Broker> = Vec::with_capacity(resp.peers.as_ref().len());
