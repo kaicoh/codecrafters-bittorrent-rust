@@ -1,7 +1,10 @@
 use crate::{
     Result,
     meta::{Meta, TrackerRequest, TrackerResponse},
-    net::{Broker, Piece},
+    net::{
+        Piece,
+        broker::{self, Broker},
+    },
     util::{Bytes20, RotationPool},
 };
 use tokio::sync::mpsc::{self, Receiver};
@@ -36,8 +39,8 @@ pub(crate) async fn get_brokers(meta: &Meta) -> Result<(RotationPool<Broker>, Re
         let mut stream = peer.connect(info_hash, peer_id).await?;
         stream.ready().await?;
 
-        let (broker, piece_rx) = Broker::new(stream);
-        brokers.push(broker);
+        let (b, piece_rx) = broker::create(stream);
+        brokers.push(b);
         rxs.push(piece_rx);
     }
 

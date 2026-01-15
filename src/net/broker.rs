@@ -28,68 +28,68 @@ pub struct Broker {
     pieces: Pieces,
 }
 
-impl Broker {
-    pub fn new(stream: PeerStream) -> (Self, Receiver<Piece>) {
-        let PeerStream {
-            mut reader, writer, ..
-        } = stream;
+pub fn create(stream: PeerStream) -> (Broker, Receiver<Piece>) {
+    let PeerStream {
+        mut reader, writer, ..
+    } = stream;
 
-        let writer = Arc::new(Mutex::new(writer));
+    let writer = Arc::new(Mutex::new(writer));
 
-        let queue = Arc::new(Mutex::new(ThrottleQueue::new(
-            THROTTLE_CAPACITY,
-            send_message(writer),
-        )));
+    let queue = Arc::new(Mutex::new(ThrottleQueue::new(
+        THROTTLE_CAPACITY,
+        send_message(writer),
+    )));
 
-        let queue_pointer = Arc::clone(&queue);
+    let (piece_tx, piece_rx) = mpsc::channel::<Piece>(100);
+    let pieces = Arc::new(Mutex::new(PieceManager::new(piece_tx)));
 
-        let (piece_tx, piece_rx) = mpsc::channel::<Piece>(100);
-        let piece_manager = PieceManager::new(piece_tx);
+    let broker = Broker { queue, pieces };
 
-        let pieces = Arc::new(Mutex::new(piece_manager));
-        let pieces_pointer = Arc::clone(&pieces);
+    let queue_pointer = broker.clone_queue();
+    let pieces_pointer = broker.clone_pieces();
 
-        tokio::spawn(async move {
-            while let Some(msg) = reader.next().await {
-                let msg = match msg {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        error!("Failed to read message: {e}");
-                        break;
-                    }
-                };
+    tokio::spawn(async move {
+        while let Some(msg) = reader.next().await {
+            let msg = match msg {
+                Ok(msg) => msg,
+                Err(e) => {
+                    error!("Failed to read message: {e}");
+                    break;
+                }
+            };
 
-                let mut queue = queue_pointer.lock().await;
-                queue.done(msg.key_hash()).await;
+            let mut queue = queue_pointer.lock().await;
+            queue.done(msg.key_hash()).await;
 
-                if let PeerMessage::Piece {
+            if let PeerMessage::Piece {
+                index,
+                begin,
+                block,
+            } = msg
+            {
+                debug!(
+                    "Received piece message: index={}, begin={}, block_length={}",
                     index,
                     begin,
-                    block,
-                } = msg
-                {
-                    debug!(
-                        "Received piece message: index={}, begin={}, block_length={}",
-                        index,
-                        begin,
-                        block.len()
-                    );
-                    let mut pieces = pieces_pointer.lock().await;
+                    block.len()
+                );
+                let mut pieces = pieces_pointer.lock().await;
 
-                    if let Err(err) = pieces
-                        .insert_block(index as usize, begin as usize, block)
-                        .await
-                    {
-                        error!("Failed to insert block: {err}");
-                        break;
-                    }
+                if let Err(err) = pieces
+                    .insert_block(index as usize, begin as usize, block)
+                    .await
+                {
+                    error!("Failed to insert block: {err}");
+                    break;
                 }
             }
-        });
+        }
+    });
 
-        (Self { queue, pieces }, piece_rx)
-    }
+    (broker, piece_rx)
+}
 
+impl Broker {
     pub async fn request_piece(&mut self, index: usize, piece_length: usize) {
         self.new_piece(index, piece_length).await;
         self.send_piece_request(index, piece_length).await;
@@ -119,6 +119,14 @@ impl Broker {
 
             offset += block_size;
         }
+    }
+
+    fn clone_queue(&self) -> Queue {
+        Arc::clone(&self.queue)
+    }
+
+    fn clone_pieces(&self) -> Pieces {
+        Arc::clone(&self.pieces)
     }
 }
 
