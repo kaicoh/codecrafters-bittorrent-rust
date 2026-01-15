@@ -15,8 +15,8 @@ macro_rules! ensure {
     };
 }
 
-mod extension;
-mod peer;
+pub mod extension;
+pub mod peer;
 
 use crate::{BitTorrentError, Result};
 

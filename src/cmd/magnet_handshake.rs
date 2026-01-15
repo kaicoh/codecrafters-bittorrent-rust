@@ -1,12 +1,6 @@
-use crate::{
-    bencode::Bencode,
-    meta::MagnetLink,
-    net::{Extension, Message},
-    util::Bytes20,
-};
+use crate::{meta::MagnetLink, util::Bytes20};
 
 use super::utils;
-use std::collections::HashMap;
 use std::error::Error;
 use std::str::FromStr;
 
@@ -21,49 +15,14 @@ pub(crate) async fn run(url: String) -> Result<(), Box<dyn Error>> {
         let mut stream = peer.connect(info_hash, peer_id).await?;
         println!("Peer ID: {}", stream.peer_id().hex_encoded());
 
-        stream.wait_bitfield().await?;
-        stream.send_message(msg_payload()).await?;
+        let ext_id = stream
+            .extension_handshake()
+            .await?
+            .metadata_ext_id()
+            .ok_or("Peer did not advertise ut_metadata extension")?;
 
-        let msg = stream.wait_message(is_ext_handshake).await?;
-
-        match msg {
-            Message::Extension(Extension::Handshake(dict)) => {
-                let ext_id =
-                    metadata_ext_id(&dict).ok_or("Peer did not advertise ut_metadata extension")?;
-                println!("Peer Metadata Extension ID: {ext_id}");
-            }
-            _ => {
-                return Err("Did not receive a valid extension handshake from peer".into());
-            }
-        }
+        println!("Peer Metadata Extension ID: {ext_id}");
     }
 
     Ok(())
-}
-
-fn msg_payload() -> Extension {
-    let mut dict = HashMap::new();
-    dict.insert(
-        "m".to_string(),
-        Bencode::Dict({
-            let mut ext_map = HashMap::new();
-            ext_map.insert("ut_metadata".to_string(), Bencode::Int(1));
-            ext_map
-        }),
-    );
-    Extension::Handshake(dict)
-}
-
-fn is_ext_handshake(msg: &Message) -> bool {
-    matches!(msg, Message::Extension(Extension::Handshake(_)))
-}
-
-fn metadata_ext_id(dict: &HashMap<String, Bencode>) -> Option<u8> {
-    if let Some(Bencode::Dict(m)) = dict.get("m")
-        && let Some(Bencode::Int(id)) = m.get("ut_metadata")
-    {
-        Some(*id as u8)
-    } else {
-        None
-    }
 }

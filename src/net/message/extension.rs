@@ -11,13 +11,29 @@ use std::collections::HashMap;
 const MESSAGE_ID_EXTENSION: u8 = 20;
 const MESSAGE_ID_EXTENSION_HANDSHAKE: u8 = 0;
 
+pub fn is_extension_message(id: u8) -> bool {
+    id == MESSAGE_ID_EXTENSION
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Extension {
     Handshake(HashMap<String, Bencode>),
 }
 
-pub fn is_extension_message(id: u8) -> bool {
-    id == MESSAGE_ID_EXTENSION
+impl Extension {
+    pub fn metadata_ext_id(&self) -> Option<u8> {
+        match self {
+            Self::Handshake(dict) => {
+                if let Some(Bencode::Dict(m)) = dict.get("m")
+                    && let Some(Bencode::Int(id)) = m.get("ut_metadata")
+                {
+                    Some(*id as u8)
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 impl AsBytes for Extension {
@@ -70,4 +86,17 @@ impl TryFrom<&[u8]> for Extension {
             _ => bail!("Unknown extension message ID: {ext_id}"),
         }
     }
+}
+
+pub fn handshake() -> Extension {
+    let mut dict = HashMap::new();
+    dict.insert(
+        "m".to_string(),
+        Bencode::Dict({
+            let mut ext_map = HashMap::new();
+            ext_map.insert("ut_metadata".to_string(), Bencode::Int(1));
+            ext_map
+        }),
+    );
+    Extension::Handshake(dict)
 }

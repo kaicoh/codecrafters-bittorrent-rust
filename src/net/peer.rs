@@ -1,6 +1,6 @@
 use crate::{BitTorrentError, Result, util::Bytes20};
 
-use super::message::{AsBytes, Message, MessageDecoder, PeerMessage};
+use super::message::{AsBytes, Extension, Message, MessageDecoder, PeerMessage, extension};
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -142,6 +142,17 @@ impl PeerStream {
         self.send_interested().await?;
         self.wait_unchoke().await?;
         Ok(())
+    }
+
+    pub async fn extension_handshake(&mut self) -> Result<Extension> {
+        self.wait_bitfield().await?;
+        self.send_message(extension::handshake()).await?;
+
+        if let Message::Extension(ext) = self.wait_message(Message::is_extension).await? {
+            Ok(ext)
+        } else {
+            unreachable!()
+        }
     }
 
     pub async fn send_message<T: AsBytes>(&mut self, msg: T) -> Result<()> {
