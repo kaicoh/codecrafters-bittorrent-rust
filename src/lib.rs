@@ -1,5 +1,6 @@
 pub mod bencode;
-mod cli;
+pub(crate) mod cli;
+mod cmd;
 mod error;
 pub mod meta;
 pub mod net;

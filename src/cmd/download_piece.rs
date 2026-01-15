@@ -1,0 +1,46 @@
+use crate::{meta::Meta, util::Bytes20};
+
+use super::utils;
+use std::error::Error;
+
+pub(crate) async fn run(output: String, path: String, index: u32) -> Result<(), Box<dyn Error>> {
+    let meta = Meta::from_path(&path)?;
+    let (mut brokers, mut piece_rx) = utils::get_brokers(&meta).await?;
+
+    let length = meta.piece_length(index as usize);
+
+    let piece_hash = meta
+        .info
+        .piece_hashes()
+        .get(index as usize)
+        .copied()
+        .ok_or_else(|| format!("Invalid piece index: {index}"))?;
+
+    println!("Downloading piece {index}...");
+
+    let broker = brokers.get_item();
+    broker.request_piece(index as usize, length).await;
+
+    println!("Waiting for piece {index} data...");
+
+    if let Some(piece) = piece_rx.recv().await {
+        let hash = Bytes20::sha1_hash(&piece.data);
+
+        if piece_hash == hash {
+            std::fs::write(output, piece.data)?;
+
+            println!("🎉 Piece {index} downloaded and verified.");
+
+            return Ok(());
+        } else {
+            return Err(format!(
+                "Hash mismatch for piece {index}. Expected {}, got {}.",
+                piece_hash.hex_encoded(),
+                hash.hex_encoded()
+            )
+            .into());
+        }
+    }
+
+    Err("Failed to receive piece data".into())
+}
