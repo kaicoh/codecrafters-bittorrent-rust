@@ -26,6 +26,9 @@ pub enum BitTorrentError {
     #[error("UrlEncodeError: {0}")]
     UrlEncodeError(#[from] serde_urlencoded::ser::Error),
 
+    #[error("UrlDecodeError: {0}")]
+    UrlDecodeError(#[from] serde_urlencoded::de::Error),
+
     #[error("TrackerError: {0}")]
     TrackerError(&'static str),
 
@@ -46,4 +49,7 @@ pub enum BitTorrentError {
 
     #[error("Unexpected channel closed")]
     ChannelClosed,
+
+    #[error("Invalid magnet link")]
+    InvalidMagnetLink,
 }
