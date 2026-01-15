@@ -1,4 +1,7 @@
+use crate::{BitTorrentError, Result};
+
 use std::collections::HashMap;
+use tokio::sync::mpsc::Sender;
 
 type Index = usize;
 type Offset = usize;
@@ -56,17 +59,14 @@ impl Blocks {
 
 pub struct PieceManager {
     blocks: HashMap<Index, Blocks>,
-    cb: Box<dyn Fn(Piece) + Send + Sync>,
+    sender: Sender<Piece>,
 }
 
 impl PieceManager {
-    pub fn new<F>(cb: F) -> Self
-    where
-        F: Fn(Piece) + Send + Sync + 'static,
-    {
+    pub fn new(sender: Sender<Piece>) -> Self {
         Self {
             blocks: HashMap::new(),
-            cb: Box::new(cb),
+            sender,
         }
     }
 
@@ -74,15 +74,22 @@ impl PieceManager {
         self.blocks.insert(index, Blocks::new(index, piece_length));
     }
 
-    pub fn insert_block(&mut self, index: Index, begin: Offset, data: Vec<u8>) {
+    pub async fn insert_block(&mut self, index: Index, begin: Offset, data: Vec<u8>) -> Result<()> {
         if let Some(blocks) = self.blocks.get_mut(&index) {
             blocks.insert_block(begin, data);
         }
 
-        if self.blocks.get(&index).map_or(false, |b| b.is_complete()) {
-            if let Some(blocks) = self.blocks.remove(&index).and_then(|b| b.into_piece()) {
-                (self.cb)(blocks);
-            }
+        if self.blocks.get(&index).is_some_and(|b| b.is_complete())
+            && let Some(piece) = self.blocks.remove(&index).and_then(|b| b.into_piece())
+        {
+            println!("Piece {index} completed.");
+
+            self.sender
+                .send(piece)
+                .await
+                .map_err(|_| BitTorrentError::ChannelClosed)?;
         }
+
+        Ok(())
     }
 }

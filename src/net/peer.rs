@@ -1,98 +1,41 @@
 use crate::{BitTorrentError, Result, util::Bytes20};
 
-use super::PeerMessage;
+use super::message::{PeerMessage, PeerMessageDecoder};
 
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use std::fmt;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
 use std::str::FromStr;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use std::task::{Context, Poll};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{
+    TcpStream,
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+};
+use tokio_stream::{Stream, StreamExt};
+use tokio_util::codec::FramedRead;
 
-const LENGTH_SIZE: usize = 4;
-const PEER_BYTE_SIZE: usize = 6;
+pub const PEER_BYTE_SIZE: usize = 6;
 const HANDSHAKE_SIZE: usize = 68;
-
-macro_rules! tri {
-    ($expr:expr) => {
-        match $expr {
-            Ok(val) => val,
-            Err(e) => {
-                eprintln!("Error from spawned thread: {e}");
-                break;
-            }
-        }
-    };
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Peer(SocketAddrV4);
 
 impl Peer {
-    pub fn connect(
-        &self,
-        info_hash: Bytes20,
-        peer_id: Bytes20,
-    ) -> Result<(Sender<PeerMessage>, Receiver<PeerMessage>)> {
-        let mut stream = TcpStream::connect(self.0)?;
+    pub async fn connect(&self, info_hash: Bytes20, peer_id: Bytes20) -> Result<PeerStream> {
+        let mut stream = TcpStream::connect(self.0).await?;
 
         let msg = Handshake::new(info_hash, peer_id);
-        stream.write_all(msg.as_bytes())?;
+        stream.write_all(msg.as_bytes()).await?;
 
         let mut resp = Handshake::default();
-        stream.read_exact(resp.as_mut())?;
+        stream.read_exact(resp.as_mut()).await?;
 
-        let rx = start_reading(stream.try_clone()?);
-        let tx = start_writing(stream);
+        let peer_id = resp.peer_id();
 
-        Ok((tx, rx))
+        Ok(PeerStream::new(peer_id, stream))
     }
-}
-
-fn start_reading(stream: TcpStream) -> Receiver<PeerMessage> {
-    let (tx, rx) = mpsc::channel::<PeerMessage>(100);
-    let mut reader = BufReader::new(stream);
-
-    tokio::spawn(async move {
-        loop {
-            let buf = tri!(reader.fill_buf());
-
-            if buf.len() < LENGTH_SIZE {
-                continue;
-            }
-
-            let length = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-
-            if buf.len() < length + LENGTH_SIZE {
-                continue;
-            }
-
-            let mut msg_buf = Vec::with_capacity(length + LENGTH_SIZE);
-
-            let _ = tri!(reader.read_exact(&mut msg_buf[..]));
-
-            let msg = tri!(PeerMessage::try_from(&msg_buf[LENGTH_SIZE..]));
-
-            if let Err(_) = tx.send(msg).await {
-                println!("Reader: receiver dropped, stopping reading");
-                break;
-            }
-        }
-    });
-
-    rx
-}
-
-fn start_writing(mut stream: TcpStream) -> Sender<PeerMessage> {
-    let (tx, mut rx) = mpsc::channel::<PeerMessage>(100);
-
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            let bytes = msg.into_bytes();
-            let _ = tri!(stream.write_all(&bytes));
-        }
-    });
-
-    tx
 }
 
 impl FromStr for Peer {
@@ -166,29 +109,79 @@ impl DerefMut for Handshake {
     }
 }
 
-impl io::Write for Handshake {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if buf.len() != HANDSHAKE_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "Invalid length for Handshake: expected {}, got {}",
-                    HANDSHAKE_SIZE,
-                    buf.len()
-                ),
-            ));
-        }
-        self.0.copy_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+impl fmt::Display for Peer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
 #[derive(Debug)]
 pub struct PeerStream {
     peer_id: Bytes20,
-    stream: TcpStream,
+    pub(crate) reader: FramedRead<OwnedReadHalf, PeerMessageDecoder>,
+    pub(crate) writer: OwnedWriteHalf,
+}
+
+impl PeerStream {
+    pub fn new(peer_id: Bytes20, stream: TcpStream) -> Self {
+        let (read_half, write_half) = stream.into_split();
+        let reader = FramedRead::new(read_half, PeerMessageDecoder);
+
+        Self {
+            peer_id,
+            reader,
+            writer: write_half,
+        }
+    }
+
+    pub fn peer_id(&self) -> Bytes20 {
+        self.peer_id
+    }
+
+    pub async fn ready(&mut self) -> Result<()> {
+        self.wait_bitfield().await?;
+        self.send_interested().await?;
+        self.wait_unchoke().await?;
+        Ok(())
+    }
+
+    async fn send_message(&mut self, msg: PeerMessage) -> Result<()> {
+        let bytes = msg.into_bytes();
+        self.writer.write_all(&bytes).await?;
+        Ok(())
+    }
+
+    async fn wait_bitfield(&mut self) -> Result<PeerMessage> {
+        self.wait_message(PeerMessage::is_bitfield).await
+    }
+
+    async fn send_interested(&mut self) -> Result<()> {
+        self.send_message(PeerMessage::Interested).await
+    }
+
+    async fn wait_unchoke(&mut self) -> Result<PeerMessage> {
+        self.wait_message(PeerMessage::is_unchoke).await
+    }
+
+    async fn wait_message<P>(&mut self, predicate: P) -> Result<PeerMessage>
+    where
+        P: Fn(&PeerMessage) -> bool,
+    {
+        while let Some(msg) = self.reader.next().await {
+            let msg = msg?;
+            if predicate(&msg) {
+                return Ok(msg);
+            }
+        }
+        Err(BitTorrentError::ConnectionClosed)
+    }
+}
+
+impl Stream for PeerStream {
+    type Item = Result<PeerMessage>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        Pin::new(&mut this.reader).poll_next(cx)
+    }
 }

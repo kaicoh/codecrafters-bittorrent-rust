@@ -41,9 +41,9 @@ pub enum BitTorrentError {
     #[error("Invalid peer message: {0}")]
     InvalidPeerMessage(String),
 
-    #[error("Oneshot send error: reciver dropped")]
-    OneshotSendError,
+    #[error("Connection closed unexpectedly")]
+    ConnectionClosed,
 
-    #[error("Task Join Error: {0}")]
-    TaskJoinError(#[from] tokio::task::JoinError),
+    #[error("Unexpected channel closed")]
+    ChannelClosed,
 }

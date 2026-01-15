@@ -4,16 +4,13 @@ use bit::{
     Cli, Command,
     bencode::Bencode,
     meta::{Meta, TrackerRequest, TrackerResponse},
-    peers::{Download, Peer},
-    util::{Bytes20, Pool},
+    net::{Broker, Peer, Piece},
+    util::{Bytes20, RotationPool},
 };
 use clap::Parser;
 use std::error::Error;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-const MAX_ATTEMPTS: u8 = 5;
+use tokio::sync::mpsc::{self, Receiver};
 
 #[tokio::main]
 async fn main() {
@@ -59,8 +56,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let info_hash = meta.info.hash()?;
             let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
-            let conn = Peer::from_str(&address)?.connect(info_hash, peer_id)?;
-            println!("Peer ID: {}", conn.peer_id().hex_encoded());
+            let stream = Peer::from_str(&address)?
+                .connect(info_hash, peer_id)
+                .await?;
+            println!("Peer ID: {}", stream.peer_id().hex_encoded());
         }
         Command::DownloadPiece {
             output,
@@ -68,165 +67,68 @@ async fn run() -> Result<(), Box<dyn Error>> {
             index,
         } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = meta.info.hash()?;
-            let peer_id = Bytes20::new(*b"-CT0001-012345678901");
-
-            let resp = get_tracker_response(&meta).await?;
-            println!("Found {} peers", resp.peers.as_ref().len());
-
-            for (i, peer) in resp.peers.as_ref().iter().enumerate() {
-                println!("Peer {}: {peer}", i + 1);
-            }
-
-            let mut pool = Pool::from_iter(resp.peers);
+            let (mut brokers, mut piece_rx) = get_brokers(&meta).await?;
 
             let length = meta.piece_length(index as usize);
+
             let piece_hash = meta
                 .info
                 .piece_hashes()
                 .get(index as usize)
                 .copied()
                 .ok_or_else(|| format!("Invalid piece index: {index}"))?;
-            println!(
-                "Expected hash for piece {index}: {}",
-                piece_hash.hex_encoded()
-            );
 
-            let mut attempts = 0;
+            println!("Downloading piece {index}...");
 
-            while attempts < MAX_ATTEMPTS {
-                let peer = pool.get_item().await;
-                let mut conn = peer.connect(info_hash, peer_id)?;
+            let broker = brokers.get_item();
+            broker.request_piece(index as usize, length).await;
 
-                conn.ready()?;
-
-                let piece_data = conn.download_piece(index, length as u32).await?;
-                let hash = Bytes20::sha1_hash(&piece_data);
-                println!(
-                    "Downloaded piece {index} from Peer: {peer}. Length: {}. Hash: {}",
-                    piece_data.len(),
-                    hash.hex_encoded()
-                );
+            println!("Waiting for piece {index} data...");
+            if let Some(piece) = piece_rx.recv().await {
+                let hash = Bytes20::sha1_hash(&piece.data);
 
                 if piece_hash == hash {
-                    std::fs::write(output, piece_data)?;
+                    std::fs::write(output, piece.data)?;
                     println!("🎉 Piece {index} downloaded and verified.");
-                    break;
+
+                    return Ok(());
                 } else {
-                    attempts += 1;
-                    println!("Hash mismatch for piece {index}. Attempt {attempts}/{MAX_ATTEMPTS}.",);
+                    return Err(format!(
+                        "Hash mismatch for piece {index}. Expected {}, got {}.",
+                        piece_hash.hex_encoded(),
+                        hash.hex_encoded()
+                    )
+                    .into());
                 }
             }
 
-            if attempts == MAX_ATTEMPTS {
-                return Err(format!(
-                    "Failed to download piece {index} after {MAX_ATTEMPTS} attempts"
-                )
-                .into());
-            }
+            return Err("Failed to receive piece data".into());
         }
         Command::Download { output, path } => {
             let meta = Meta::from_path(&path)?;
-            let info_hash = meta.info.hash()?;
-            let peer_id = Bytes20::new(*b"-CT0001-012345678901");
+            let (mut brokers, mut piece_rx) = get_brokers(&meta).await?;
 
-            let resp = get_tracker_response(&meta).await?;
-            println!("Found {} peers", resp.peers.as_ref().len());
-
-            for (i, peer) in resp.peers.as_ref().iter().enumerate() {
-                println!("Peer {}: {peer}", i + 1);
-            }
-
-            let peer_len = resp.peers.as_ref().len();
-
-            //let pool = Arc::new(Mutex::new(Pool::from_iter(resp.peers)));
-
-            println!("Piece Length: {}", meta.info.piece_length);
             let hashes = meta.piece_hashes();
-            for h in hashes {
-                println!("Piece hash: {}", h.hex_encoded());
-            }
+            let mut pieces: Vec<Piece> = Vec::with_capacity(hashes.len());
 
-            let num_pieces = hashes.len();
-
-            let mut downloads: Vec<Download> = Vec::new();
-            let mut tasks = tokio::task::JoinSet::<Download>::new();
-
-            for (index, h) in hashes.iter().enumerate() {
-                let mut attempts = 0;
-                let h = *h;
-
+            for (index, _) in hashes.iter().enumerate() {
+                let broker = brokers.get_item();
                 let length = meta.piece_length(index);
-                //let pool = Arc::clone(&pool);
-                let peer = resp.peers.as_ref()[index % peer_len].clone();
-
-                tasks.spawn(async move {
-                    while attempts < MAX_ATTEMPTS {
-                        //let peer = {
-                        //    let mut pool = pool.lock().await;
-                        //    pool.get_item().await
-                        //};
-
-                        let mut conn = peer
-                            .connect(info_hash, peer_id)
-                            .expect("Failed to connect to peer");
-
-                        conn.ready().expect("Failed to ready connection");
-
-                        let piece_data = conn
-                            .download_piece(index as u32, length as u32)
-                            .await
-                            .expect("Failed to download piece");
-
-                        println!(
-                            "Downloaded piece {}/{} from Peer: {peer}. Length: {}",
-                            index + 1,
-                            num_pieces,
-                            piece_data.len()
-                        );
-
-                        let hash = Bytes20::sha1_hash(&piece_data);
-
-                        if h == hash {
-                            println!(
-                                "🎉 Downloaded and verified piece {}/{num_pieces}",
-                                index + 1
-                            );
-
-                            return Download {
-                                index: index as u32,
-                                block: piece_data,
-                            };
-                        } else {
-                            attempts += 1;
-
-                            println!(
-                                "🤔 Hash mismatch for piece {}. Expected {}, got {}. Retrying {attempts}/{MAX_ATTEMPTS}",
-                                index + 1,
-                                h.hex_encoded(),
-                                hash.hex_encoded()
-                            );
-                        }
-                    }
-
-                    panic!(
-                        "Failed to download piece {} after {MAX_ATTEMPTS} attempts",
-                        index + 1
-                    );
-                });
+                broker.request_piece(index, length).await;
             }
 
-            while let Some(res) = tasks.join_next().await {
-                let download = res?;
-                downloads.push(download);
+            while let Some(piece) = piece_rx.recv().await {
+                pieces.push(piece);
+                println!("Downloaded piece {}/{}", pieces.len(), hashes.len());
+
+                if pieces.len() == hashes.len() {
+                    break;
+                }
             }
 
-            downloads.sort();
+            pieces.sort_by_key(|p| p.index);
 
-            let file_data = downloads
-                .into_iter()
-                .flat_map(|d| d.block)
-                .collect::<Vec<u8>>();
+            let file_data = pieces.into_iter().flat_map(|d| d.data).collect::<Vec<u8>>();
 
             std::fs::write(output, file_data)?;
         }
@@ -244,4 +146,47 @@ async fn get_tracker_response(meta: &Meta) -> Result<TrackerResponse, Box<dyn Er
         .send()
         .await?;
     Ok(resp)
+}
+
+async fn get_brokers(
+    meta: &Meta,
+) -> Result<(RotationPool<Broker>, Receiver<Piece>), Box<dyn Error>> {
+    let info_hash = meta.info.hash()?;
+    let peer_id = Bytes20::new(*b"-CT0001-012345678901");
+
+    let resp = get_tracker_response(meta).await?;
+    println!("Found {} peers", resp.peers.as_ref().len());
+
+    for (i, peer) in resp.peers.as_ref().iter().enumerate() {
+        println!("Peer {}: {peer}", i + 1);
+    }
+
+    let mut brokers: Vec<Broker> = Vec::with_capacity(resp.peers.as_ref().len());
+    let mut rxs: Vec<Receiver<Piece>> = Vec::with_capacity(resp.peers.as_ref().len());
+
+    for peer in resp.peers.as_ref() {
+        let mut stream = peer.connect(info_hash, peer_id).await?;
+        stream.ready().await?;
+
+        let (broker, piece_rx) = Broker::new(stream);
+        brokers.push(broker);
+        rxs.push(piece_rx);
+    }
+
+    let brokers = RotationPool::from_iter(brokers);
+    let (merged_tx, merged_rx) = mpsc::channel::<Piece>(100);
+
+    for mut rx in rxs {
+        let tx = merged_tx.clone();
+
+        tokio::spawn(async move {
+            while let Some(piece) = rx.recv().await {
+                if tx.send(piece).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    Ok((brokers, merged_rx))
 }

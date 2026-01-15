@@ -1,17 +1,25 @@
 use crate::util::{KeyHash, ThrottleQueue};
 
-use super::{PeerMessage, Piece, PieceManager};
+use super::{PeerMessage, PeerStream, Piece, PieceManager};
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::{
     Mutex,
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, Receiver},
 };
+use tokio_stream::StreamExt;
 
 const BLOCK_SIZE: usize = 16 * 1024;
 const THROTTLE_CAPACITY: usize = 5;
 
-type Queue = Arc<Mutex<ThrottleQueue<PeerMessage, Box<dyn Fn(PeerMessage) + Send + Sync>>>>;
+type PeerMessageSender =
+    Box<dyn Fn(PeerMessage) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+type Queue = Arc<Mutex<ThrottleQueue<PeerMessage, PeerMessageSender>>>;
 type Pieces = Arc<Mutex<PieceManager>>;
 
 pub struct Broker {
@@ -20,30 +28,38 @@ pub struct Broker {
 }
 
 impl Broker {
-    pub fn new(
-        sender: Sender<PeerMessage>,
-        mut receiver: Receiver<PeerMessage>,
-    ) -> (Self, Receiver<Piece>) {
-        let send_queue = send_message(sender);
+    pub fn new(stream: PeerStream) -> (Self, Receiver<Piece>) {
+        let PeerStream {
+            mut reader, writer, ..
+        } = stream;
 
-        let mut queue = ThrottleQueue::new(THROTTLE_CAPACITY, send_queue);
-        queue.add_skip(PeerMessage::Choke.key_hash());
+        let writer = Arc::new(Mutex::new(writer));
 
-        let queue = Arc::new(Mutex::new(queue));
+        let queue = Arc::new(Mutex::new(ThrottleQueue::new(
+            THROTTLE_CAPACITY,
+            send_message(writer),
+        )));
+
         let queue_pointer = Arc::clone(&queue);
 
         let (piece_tx, piece_rx) = mpsc::channel::<Piece>(100);
-        let send_piece = send_piece(piece_tx);
-
-        let piece_manager = PieceManager::new(send_piece);
+        let piece_manager = PieceManager::new(piece_tx);
 
         let pieces = Arc::new(Mutex::new(piece_manager));
         let pieces_pointer = Arc::clone(&pieces);
 
         tokio::spawn(async move {
-            while let Some(msg) = receiver.recv().await {
+            while let Some(msg) = reader.next().await {
+                let msg = match msg {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        eprintln!("Failed to read message: {e}");
+                        break;
+                    }
+                };
+
                 let mut queue = queue_pointer.lock().await;
-                queue.done(msg.key_hash());
+                queue.done(msg.key_hash()).await;
 
                 if let PeerMessage::Piece {
                     index,
@@ -51,8 +67,21 @@ impl Broker {
                     block,
                 } = msg
                 {
+                    println!(
+                        "Received piece message: index={}, begin={}, block_length={}",
+                        index,
+                        begin,
+                        block.len()
+                    );
                     let mut pieces = pieces_pointer.lock().await;
-                    pieces.insert_block(index as usize, begin as usize, block);
+
+                    if let Err(err) = pieces
+                        .insert_block(index as usize, begin as usize, block)
+                        .await
+                    {
+                        eprintln!("Failed to insert block: {err}");
+                        break;
+                    }
                 }
             }
         });
@@ -66,7 +95,7 @@ impl Broker {
     }
 
     async fn queue(&mut self, msg: PeerMessage) {
-        self.queue.lock().await.queue(msg);
+        self.queue.lock().await.queue(msg).await;
     }
 
     async fn new_piece(&mut self, index: usize, length: usize) {
@@ -92,26 +121,16 @@ impl Broker {
     }
 }
 
-fn send_message(sender: Sender<PeerMessage>) -> Box<dyn Fn(PeerMessage) + Send + Sync> {
+fn send_message(writer: Arc<Mutex<OwnedWriteHalf>>) -> PeerMessageSender {
     Box::new(move |msg: PeerMessage| {
-        let sender = sender.clone();
+        let writer = Arc::clone(&writer);
 
-        tokio::spawn(async move {
-            if let Err(e) = sender.send(msg).await {
-                eprintln!("Failed to send message: {e}");
+        Box::pin(async move {
+            let bytes = msg.into_bytes();
+            let mut writer = writer.lock().await;
+            if let Err(err) = writer.write_all(&bytes).await {
+                eprintln!("Failed to send message: {err}");
             }
-        });
-    })
-}
-
-fn send_piece(sender: Sender<Piece>) -> Box<dyn Fn(Piece) + Send + Sync> {
-    Box::new(move |piece: Piece| {
-        let sender = sender.clone();
-
-        tokio::spawn(async move {
-            if let Err(e) = sender.send(piece).await {
-                eprintln!("Failed to send piece: {e}");
-            }
-        });
+        })
     })
 }

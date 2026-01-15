@@ -3,7 +3,6 @@ mod cli;
 mod error;
 pub mod meta;
 pub mod net;
-pub mod peers;
 pub mod util;
 
 pub use cli::{Cli, Command};

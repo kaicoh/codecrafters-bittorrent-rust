@@ -1,7 +1,7 @@
 use crate::{
     BitTorrentError, Result,
     bencode::{ByteSeqVisitor, Deserializer},
-    peers::{PEER_SIZE, Peer},
+    net::{PEER_BYTE_SIZE, Peer},
     util::Bytes20,
 };
 
@@ -140,7 +140,7 @@ impl<'de> de::Deserialize<'de> for Peers {
     where
         D: de::Deserializer<'de>,
     {
-        let visitor = ByteSeqVisitor::new(PEER_SIZE);
+        let visitor = ByteSeqVisitor::new(PEER_BYTE_SIZE);
         let vec = deserializer.deserialize_bytes(visitor)?;
         Ok(Self(vec))
     }

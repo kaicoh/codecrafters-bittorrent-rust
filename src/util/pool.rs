@@ -80,6 +80,31 @@ impl<T: Clone + Send + Sync + 'static + fmt::Display> fmt::Display for Item<T> {
     }
 }
 
+#[derive(Debug)]
+pub struct RotationPool<T> {
+    items: Vec<T>,
+    index: usize,
+}
+
+impl<T> RotationPool<T> {
+    pub fn new(items: Vec<T>) -> Self {
+        Self { items, index: 0 }
+    }
+
+    pub fn get_item(&mut self) -> &mut T {
+        let next_index = (self.index + 1) % self.items.len();
+        let item = self.items.get_mut(self.index).unwrap();
+        self.index = next_index;
+        item
+    }
+}
+
+impl<T> FromIterator<T> for RotationPool<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

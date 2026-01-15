@@ -3,6 +3,11 @@ use crate::{
     util::{Bytes20, KeyHash},
 };
 
+use bytes::{Buf, BytesMut};
+use tokio_util::codec::Decoder;
+
+const LENGTH_SIZE: usize = 4;
+
 const MESSAGE_ID_CHOKE: u8 = 0;
 const MESSAGE_ID_UNCHOKE: u8 = 1;
 const MESSAGE_ID_INTERESTED: u8 = 2;
@@ -125,6 +130,42 @@ impl PeerMessage {
 
         bytes
     }
+
+    pub fn is_bitfield(&self) -> bool {
+        matches!(self, PeerMessage::Bitfield(_))
+    }
+
+    pub fn is_unchoke(&self) -> bool {
+        matches!(self, PeerMessage::Unchoke)
+    }
+}
+
+#[derive(Debug)]
+pub struct PeerMessageDecoder;
+
+impl Decoder for PeerMessageDecoder {
+    type Item = PeerMessage;
+    type Error = BitTorrentError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        if src.len() < LENGTH_SIZE {
+            return Ok(None);
+        }
+
+        let mut length_bytes = [0u8; LENGTH_SIZE];
+        length_bytes.copy_from_slice(&src[..LENGTH_SIZE]);
+        let length = u32::from_be_bytes(length_bytes) as usize;
+
+        if src.len() < LENGTH_SIZE + length {
+            return Ok(None);
+        }
+
+        src.advance(LENGTH_SIZE);
+        let msg_bytes = src.split_to(length);
+        let msg = PeerMessage::try_from(msg_bytes.as_ref())?;
+
+        Ok(Some(msg))
+    }
 }
 
 impl TryFrom<&[u8]> for PeerMessage {
@@ -203,13 +244,13 @@ impl KeyHash for PeerMessage {
                 let mut data = Vec::with_capacity(8);
                 data.extend_from_slice(&index.to_be_bytes());
                 data.extend_from_slice(&begin.to_be_bytes());
-                Bytes20::from(data.as_slice())
+                Bytes20::sha1_hash(data.as_slice())
             }
             Self::Piece { index, begin, .. } => {
                 let mut data = Vec::with_capacity(8);
                 data.extend_from_slice(&index.to_be_bytes());
                 data.extend_from_slice(&begin.to_be_bytes());
-                Bytes20::from(data.as_slice())
+                Bytes20::sha1_hash(data.as_slice())
             }
             _ => Bytes20::from(&[0u8; 20][..]),
         }
