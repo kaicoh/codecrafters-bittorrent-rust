@@ -39,6 +39,9 @@ pub enum Command {
     MagnetParse {
         uri: String,
     },
+    MagnetHandshake {
+        uri: String,
+    },
 }
 
 impl Command {
@@ -55,6 +58,7 @@ impl Command {
             } => cmd::download_piece::run(output, path, index).await?,
             Self::Download { output, path } => cmd::download::run(output, path).await?,
             Self::MagnetParse { uri } => cmd::magnet_parse::run(uri).await?,
+            Self::MagnetHandshake { uri } => cmd::magnet_handshake::run(uri).await?,
         }
 
         Ok(())

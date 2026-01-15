@@ -81,6 +81,7 @@ impl Handshake {
         let mut bytes = [0u8; HANDSHAKE_SIZE];
         bytes[0] = 19; // Length of protocol string
         bytes[1..20].copy_from_slice(b"BitTorrent protocol");
+        bytes[20..28].copy_from_slice(b"\x00\x00\x00\x00\x00\x10\x00\x00");
         bytes[28..48].copy_from_slice(info_hash.as_ref());
         bytes[48..68].copy_from_slice(peer_id.as_ref());
         Self(bytes)

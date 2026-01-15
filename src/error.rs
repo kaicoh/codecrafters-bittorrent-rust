@@ -52,4 +52,7 @@ pub enum BitTorrentError {
 
     #[error("Invalid magnet link")]
     InvalidMagnetLink,
+
+    #[error("Hex decode error: {0}")]
+    FromHexError(#[from] hex::FromHexError),
 }

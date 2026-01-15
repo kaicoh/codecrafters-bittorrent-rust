@@ -16,6 +16,10 @@ macro_rules! err {
     };
 }
 
+pub trait AsTrackerRequest {
+    fn as_tracker_request(&self) -> Result<TrackerRequest>;
+}
+
 #[derive(Debug)]
 pub struct TrackerRequest {
     inner: reqwest::RequestBuilder,

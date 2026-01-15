@@ -4,6 +4,8 @@ use crate::{
     util::{Bytes20, HASH_SIZE},
 };
 
+use super::{AsTrackerRequest, TrackerRequest};
+
 use serde::{Deserialize, Serialize, de, ser};
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -101,6 +103,16 @@ impl Meta {
         } else {
             piece_length
         }
+    }
+}
+
+impl AsTrackerRequest for Meta {
+    fn as_tracker_request(&self) -> crate::Result<TrackerRequest> {
+        TrackerRequest::builder()
+            .url(&self.announce)
+            .info_hash(self.info.hash()?)
+            .left(self.info.length)
+            .build()
     }
 }
 

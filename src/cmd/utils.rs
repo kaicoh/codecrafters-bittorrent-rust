@@ -1,6 +1,6 @@
 use crate::{
     Result,
-    meta::{Meta, TrackerRequest, TrackerResponse},
+    meta::{AsTrackerRequest, Meta, TrackerResponse},
     net::{
         Piece,
         broker::{self, Broker},
@@ -10,14 +10,8 @@ use crate::{
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::info;
 
-pub(crate) async fn get_response(meta: &Meta) -> Result<TrackerResponse> {
-    let resp = TrackerRequest::builder()
-        .url(&meta.announce)
-        .info_hash(meta.info.hash()?)
-        .left(meta.info.length)
-        .build()?
-        .send()
-        .await?;
+pub(crate) async fn get_response<R: AsTrackerRequest>(req: &R) -> Result<TrackerResponse> {
+    let resp = req.as_tracker_request()?.send().await?;
     Ok(resp)
 }
 
