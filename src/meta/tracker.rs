@@ -133,6 +133,12 @@ pub struct TrackerResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Peers(Vec<Peer>);
 
+impl Peers {
+    pub fn iter(&self) -> std::slice::Iter<'_, Peer> {
+        self.0.iter()
+    }
+}
+
 impl AsRef<[Peer]> for Peers {
     fn as_ref(&self) -> &[Peer] {
         &self.0

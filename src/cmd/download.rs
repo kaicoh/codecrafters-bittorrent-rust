@@ -6,7 +6,12 @@ use tracing::debug;
 
 pub(crate) async fn run(output: String, path: String) -> Result<(), Box<dyn Error>> {
     let meta = Meta::from_path(&path)?;
-    let (mut brokers, mut piece_rx) = utils::get_brokers(&meta).await?;
+    let info_hash = meta.info.hash()?;
+
+    let resp = utils::get_response(&meta).await?;
+    let peers = resp.peers.as_ref();
+
+    let (mut brokers, mut piece_rx) = utils::broker_channels(peers, info_hash).await?;
 
     let hashes = meta.piece_hashes();
     let mut pieces: Vec<Piece> = Vec::with_capacity(hashes.len());

@@ -119,6 +119,9 @@ pub struct PeerStream {
     peer_id: Bytes20,
     pub(crate) reader: FramedRead<OwnedReadHalf, MessageDecoder>,
     pub(crate) writer: OwnedWriteHalf,
+    get_bitfield: bool,
+    sent_interested: bool,
+    get_unchoked: bool,
 }
 
 impl PeerStream {
@@ -130,6 +133,9 @@ impl PeerStream {
             peer_id,
             reader,
             writer: write_half,
+            get_bitfield: false,
+            sent_interested: false,
+            get_unchoked: false,
         }
     }
 
@@ -138,9 +144,18 @@ impl PeerStream {
     }
 
     pub async fn ready(&mut self) -> Result<()> {
-        self.wait_bitfield().await?;
-        self.send_interested().await?;
-        self.wait_unchoke().await?;
+        if !self.get_bitfield {
+            self.wait_bitfield().await?;
+        }
+
+        if !self.sent_interested {
+            self.send_interested().await?;
+        }
+
+        if !self.get_unchoked {
+            self.wait_unchoke().await?;
+        }
+
         Ok(())
     }
 
@@ -157,8 +172,11 @@ impl PeerStream {
     }
 
     pub async fn wait_bitfield(&mut self) -> Result<Message> {
-        self.wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_bitfield))
-            .await
+        let msg = self
+            .wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_bitfield))
+            .await?;
+        self.get_bitfield = true;
+        Ok(msg)
     }
 
     pub async fn wait_extention(&mut self) -> Result<Extension> {
@@ -170,12 +188,17 @@ impl PeerStream {
     }
 
     pub async fn send_interested(&mut self) -> Result<()> {
-        self.send_message(PeerMessage::Interested).await
+        self.send_message(PeerMessage::Interested).await?;
+        self.sent_interested = true;
+        Ok(())
     }
 
     pub async fn wait_unchoke(&mut self) -> Result<Message> {
-        self.wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_unchoke))
-            .await
+        let msg = self
+            .wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_unchoke))
+            .await?;
+        self.get_unchoked = true;
+        Ok(msg)
     }
 
     pub async fn wait_message<P>(&mut self, predicate: P) -> Result<Message>

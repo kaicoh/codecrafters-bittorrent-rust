@@ -16,7 +16,7 @@ pub(crate) async fn run(output: String, url: String, index: u32) -> Result<(), B
 
     let resp = utils::get_response(&magnet_link).await?;
 
-    for peer in resp.peers {
+    for peer in resp.peers.iter() {
         let info_hash = magnet_link.info_hash();
         let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
@@ -44,8 +44,7 @@ pub(crate) async fn run(output: String, url: String, index: u32) -> Result<(), B
             _ => return Err("Unexpected extension message".into()),
         };
 
-        stream.send_interested().await?;
-        stream.wait_unchoke().await?;
+        stream.ready().await?;
 
         let (mut b, mut piece_rx) = broker::create(stream);
         let length = info.piece_length(index as usize);

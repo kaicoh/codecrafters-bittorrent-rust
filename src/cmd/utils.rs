@@ -1,14 +1,13 @@
 use crate::{
     Result,
-    meta::{AsTrackerRequest, Info, Meta, TrackerResponse},
+    meta::{AsTrackerRequest, Info, TrackerResponse},
     net::{
-        Piece,
+        Peer, Piece,
         broker::{self, Broker},
     },
     util::{Bytes20, RotationPool},
 };
 use tokio::sync::mpsc::{self, Receiver};
-use tracing::info;
 
 pub fn print_info(info: &Info) -> Result<()> {
     println!("Length: {}", info.length);
@@ -28,21 +27,16 @@ pub(crate) async fn get_response<R: AsTrackerRequest>(req: &R) -> Result<Tracker
     Ok(resp)
 }
 
-pub(crate) async fn get_brokers(meta: &Meta) -> Result<(RotationPool<Broker>, Receiver<Piece>)> {
-    let info_hash = meta.info.hash()?;
+pub(crate) async fn broker_channels<'a>(
+    peers: &'a [Peer],
+    info_hash: Bytes20,
+) -> Result<(RotationPool<Broker>, Receiver<Piece>)> {
     let peer_id = Bytes20::new(*b"-CT0001-012345678901");
 
-    let resp = get_response(meta).await?;
-    info!("Found {} peers", resp.peers.as_ref().len());
+    let mut brokers: Vec<Broker> = Vec::with_capacity(peers.len());
+    let mut rxs: Vec<Receiver<Piece>> = Vec::with_capacity(peers.len());
 
-    for (i, peer) in resp.peers.as_ref().iter().enumerate() {
-        info!("Peer {}: {peer}", i + 1);
-    }
-
-    let mut brokers: Vec<Broker> = Vec::with_capacity(resp.peers.as_ref().len());
-    let mut rxs: Vec<Receiver<Piece>> = Vec::with_capacity(resp.peers.as_ref().len());
-
-    for peer in resp.peers.as_ref() {
+    for peer in peers {
         let mut stream = peer.connect(info_hash, peer_id).await?;
         stream.ready().await?;
 

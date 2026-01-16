@@ -6,7 +6,12 @@ use tracing::info;
 
 pub(crate) async fn run(output: String, path: String, index: u32) -> Result<(), Box<dyn Error>> {
     let meta = Meta::from_path(&path)?;
-    let (mut brokers, mut piece_rx) = utils::get_brokers(&meta).await?;
+    let info_hash = meta.info.hash()?;
+
+    let resp = utils::get_response(&meta).await?;
+    let peers = resp.peers.as_ref();
+
+    let (mut brokers, mut piece_rx) = utils::broker_channels(peers, info_hash).await?;
 
     let length = meta.piece_length(index as usize);
 
