@@ -147,12 +147,7 @@ impl PeerStream {
     pub async fn extension_handshake(&mut self) -> Result<Extension> {
         self.wait_bitfield().await?;
         self.send_message(extension::handshake()).await?;
-
-        if let Message::Extension(ext) = self.wait_message(Message::is_extension).await? {
-            Ok(ext)
-        } else {
-            unreachable!()
-        }
+        self.wait_extention().await
     }
 
     pub async fn send_message<T: AsBytes>(&mut self, msg: T) -> Result<()> {
@@ -164,6 +159,14 @@ impl PeerStream {
     pub async fn wait_bitfield(&mut self) -> Result<Message> {
         self.wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_bitfield))
             .await
+    }
+
+    pub async fn wait_extention(&mut self) -> Result<Extension> {
+        if let Message::Extension(ext) = self.wait_message(Message::is_extension).await? {
+            Ok(ext)
+        } else {
+            unreachable!()
+        }
     }
 
     async fn send_interested(&mut self) -> Result<()> {

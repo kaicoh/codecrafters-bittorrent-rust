@@ -1,6 +1,6 @@
 use crate::{
     Result,
-    meta::{AsTrackerRequest, Meta, TrackerResponse},
+    meta::{AsTrackerRequest, Info, Meta, TrackerResponse},
     net::{
         Piece,
         broker::{self, Broker},
@@ -9,6 +9,19 @@ use crate::{
 };
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::info;
+
+pub fn print_info(info: &Info) -> Result<()> {
+    println!("Length: {}", info.length);
+    println!("Info Hash: {}", info.hash()?.hex_encoded());
+    println!("Piece Length: {}", info.piece_length);
+    println!("Piece Hashes:");
+
+    for hash in info.piece_hashes() {
+        println!("{}", hash.hex_encoded());
+    }
+
+    Ok(())
+}
 
 pub(crate) async fn get_response<R: AsTrackerRequest>(req: &R) -> Result<TrackerResponse> {
     let resp = req.as_tracker_request()?.send().await?;

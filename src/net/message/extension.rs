@@ -11,6 +11,9 @@ use std::collections::HashMap;
 const MESSAGE_ID_EXTENSION: u8 = 20;
 const MESSAGE_ID_EXTENSION_HANDSHAKE: u8 = 0;
 
+const MESSAGE_TYPE_REQUEST: Bencode = Bencode::Int(0);
+const MESSAGE_TYPE_DATA: Bencode = Bencode::Int(1);
+
 pub fn is_extension_message(id: u8) -> bool {
     id == MESSAGE_ID_EXTENSION
 }
@@ -19,6 +22,7 @@ pub fn is_extension_message(id: u8) -> bool {
 pub enum Extension {
     Handshake(HashMap<String, Bencode>),
     RequestMetadata { ext_id: u8, piece: u32 },
+    Metadata { ext_id: u8, piece: u32, data: Bytes },
 }
 
 impl Extension {
@@ -34,6 +38,7 @@ impl Extension {
                 }
             }
             Self::RequestMetadata { ext_id, .. } => Some(*ext_id),
+            Self::Metadata { ext_id, .. } => Some(*ext_id),
         }
     }
 }
@@ -53,6 +58,15 @@ impl AsBytes for Extension {
                 dict.insert("piece".to_string(), Bencode::Int(*piece as i64));
                 dict.serialize(&mut serializer)?;
             }
+            Self::Metadata { piece, data, .. } => {
+                let mut dict = HashMap::new();
+                dict.insert("msg_type".to_string(), Bencode::Int(1)); // data
+                dict.insert("piece".to_string(), Bencode::Int(*piece as i64));
+                dict.insert("total_size".to_string(), Bencode::Int(data.len() as i64));
+
+                dict.serialize(&mut serializer)?;
+                dict_bytes.extend_from_slice(data);
+            }
         };
 
         // 1 for message ID
@@ -62,14 +76,14 @@ impl AsBytes for Extension {
         let ext_id = match self {
             Self::Handshake(_) => MESSAGE_ID_EXTENSION_HANDSHAKE,
             Self::RequestMetadata { ext_id, .. } => *ext_id,
+            Self::Metadata { ext_id, .. } => *ext_id,
         };
 
         Ok(length
             .to_be_bytes()
-            .iter()
-            .chain(&[MESSAGE_ID_EXTENSION, ext_id]) // message ID and extended message ID
-            .chain(&dict_bytes)
-            .cloned()
+            .into_iter()
+            .chain([MESSAGE_ID_EXTENSION, ext_id]) // message ID and extended message ID
+            .chain(dict_bytes)
             .collect())
     }
 }
@@ -95,7 +109,34 @@ impl TryFrom<&[u8]> for Extension {
 
                 Ok(Extension::Handshake(dict))
             }
-            _ => bail!("Unknown extension message ID: {ext_id}"),
+            _ => {
+                let data_bytes = &bytes[2..];
+                let mut deserializer = BencodeDeserializer::new(data_bytes);
+                let dict: HashMap<String, Bencode> = Deserialize::deserialize(&mut deserializer)?;
+
+                let msg_type = dict
+                    .get("msg_type")
+                    .ok_or_else(|| BitTorrentError::DeserdeError("Missing msg_type".to_string()))?;
+
+                let piece = get_int(&dict, "piece")? as u32;
+
+                match *msg_type {
+                    MESSAGE_TYPE_REQUEST => Ok(Extension::RequestMetadata { ext_id, piece }),
+                    MESSAGE_TYPE_DATA => {
+                        let total_size = get_int(&dict, "total_size")? as usize;
+                        let bytes = deserializer.read_exact(total_size)?;
+
+                        Ok(Extension::Metadata {
+                            ext_id,
+                            piece,
+                            data: Bytes::from(bytes),
+                        })
+                    }
+                    _ => Err(BitTorrentError::DeserdeError(
+                        "Unknown msg_type".to_string(),
+                    )),
+                }
+            }
         }
     }
 }
@@ -111,4 +152,14 @@ pub fn handshake() -> Extension {
         }),
     );
     Extension::Handshake(dict)
+}
+
+fn get_int(dict: &HashMap<String, Bencode>, key: &str) -> Result<i64> {
+    if let Some(Bencode::Int(v)) = dict.get(key) {
+        Ok(*v)
+    } else {
+        Err(BitTorrentError::DeserdeError(format!(
+            "Missing or invalid {key}",
+        )))
+    }
 }

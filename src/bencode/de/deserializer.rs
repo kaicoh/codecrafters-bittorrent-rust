@@ -73,7 +73,7 @@ impl<R: Read> Deserializer<R> {
         Ok(buf[0])
     }
 
-    fn read_exact(&mut self, len: usize) -> Result<Vec<u8>> {
+    pub(crate) fn read_exact(&mut self, len: usize) -> Result<Vec<u8>> {
         let mut buf = vec![0u8; len];
         self.rdr.read_exact(&mut buf)?;
         Ok(buf)
