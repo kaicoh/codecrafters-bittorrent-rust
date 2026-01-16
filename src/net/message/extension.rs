@@ -120,6 +120,8 @@ impl TryFrom<&[u8]> for Extension {
 
                 let piece = get_int(&dict, "piece")? as u32;
 
+                println!("Extension message type: {msg_type}");
+
                 match *msg_type {
                     MESSAGE_TYPE_REQUEST => Ok(Extension::RequestMetadata { ext_id, piece }),
                     MESSAGE_TYPE_DATA => {
