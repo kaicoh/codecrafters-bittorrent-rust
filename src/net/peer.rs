@@ -169,11 +169,11 @@ impl PeerStream {
         }
     }
 
-    async fn send_interested(&mut self) -> Result<()> {
+    pub async fn send_interested(&mut self) -> Result<()> {
         self.send_message(PeerMessage::Interested).await
     }
 
-    async fn wait_unchoke(&mut self) -> Result<Message> {
+    pub async fn wait_unchoke(&mut self) -> Result<Message> {
         self.wait_message(|msg| msg.as_peer_message().is_some_and(PeerMessage::is_unchoke))
             .await
     }

@@ -73,6 +73,18 @@ impl Info {
         let digest = Sha1::digest(&bytes);
         Ok(Bytes20::from(digest.as_ref()))
     }
+
+    pub fn piece_length(&self, index: usize) -> usize {
+        let piece_length = self.piece_length as usize;
+        let last_piece_length = (self.length % piece_length as u64) as usize;
+        let is_last_piece = index == (self.num_pieces() - 1);
+
+        if is_last_piece {
+            last_piece_length
+        } else {
+            piece_length
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,15 +106,7 @@ impl Meta {
     }
 
     pub fn piece_length(&self, index: usize) -> usize {
-        let piece_length = self.info.piece_length as usize;
-        let last_piece_length = (self.info.length % piece_length as u64) as usize;
-        let is_last_piece = index == (self.info.num_pieces() - 1);
-
-        if is_last_piece {
-            last_piece_length
-        } else {
-            piece_length
-        }
+        self.info.piece_length(index)
     }
 }
 
