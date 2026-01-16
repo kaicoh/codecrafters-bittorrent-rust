@@ -3,6 +3,7 @@ pub(crate) mod download;
 pub(crate) mod download_piece;
 pub(crate) mod handshake;
 pub(crate) mod info;
+pub(crate) mod magnet_download;
 pub(crate) mod magnet_download_piece;
 pub(crate) mod magnet_handshake;
 pub(crate) mod magnet_info;
