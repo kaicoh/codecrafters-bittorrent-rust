@@ -13,6 +13,7 @@ const MESSAGE_ID_EXTENSION_HANDSHAKE: u8 = 0;
 
 const MESSAGE_TYPE_REQUEST: Bencode = Bencode::Int(0);
 const MESSAGE_TYPE_DATA: Bencode = Bencode::Int(1);
+const MESSAGE_TYPE_REJECTED: Bencode = Bencode::Int(2);
 
 pub fn is_extension_message(id: u8) -> bool {
     id == MESSAGE_ID_EXTENSION
@@ -23,6 +24,7 @@ pub enum Extension {
     Handshake(HashMap<String, Bencode>),
     RequestMetadata { ext_id: u8, piece: u32 },
     Metadata { ext_id: u8, piece: u32, data: Bytes },
+    Rejected { ext_id: u8, piece: u32 },
 }
 
 impl Extension {
@@ -39,6 +41,7 @@ impl Extension {
             }
             Self::RequestMetadata { ext_id, .. } => Some(*ext_id),
             Self::Metadata { ext_id, .. } => Some(*ext_id),
+            Self::Rejected { ext_id, .. } => Some(*ext_id),
         }
     }
 }
@@ -54,18 +57,24 @@ impl AsBytes for Extension {
             }
             Self::RequestMetadata { piece, .. } => {
                 let mut dict = HashMap::new();
-                dict.insert("msg_type".to_string(), Bencode::Int(0)); // request
+                dict.insert("msg_type".to_string(), MESSAGE_TYPE_REQUEST); // request
                 dict.insert("piece".to_string(), Bencode::Int(*piece as i64));
                 dict.serialize(&mut serializer)?;
             }
             Self::Metadata { piece, data, .. } => {
                 let mut dict = HashMap::new();
-                dict.insert("msg_type".to_string(), Bencode::Int(1)); // data
+                dict.insert("msg_type".to_string(), MESSAGE_TYPE_DATA); // data
                 dict.insert("piece".to_string(), Bencode::Int(*piece as i64));
                 dict.insert("total_size".to_string(), Bencode::Int(data.len() as i64));
 
                 dict.serialize(&mut serializer)?;
                 dict_bytes.extend_from_slice(data);
+            }
+            Self::Rejected { piece, .. } => {
+                let mut dict = HashMap::new();
+                dict.insert("msg_type".to_string(), MESSAGE_TYPE_REJECTED); // rejected
+                dict.insert("piece".to_string(), Bencode::Int(*piece as i64));
+                dict.serialize(&mut serializer)?;
             }
         };
 
@@ -77,6 +86,7 @@ impl AsBytes for Extension {
             Self::Handshake(_) => MESSAGE_ID_EXTENSION_HANDSHAKE,
             Self::RequestMetadata { ext_id, .. } => *ext_id,
             Self::Metadata { ext_id, .. } => *ext_id,
+            Self::Rejected { ext_id, .. } => *ext_id,
         };
 
         Ok(length
@@ -120,8 +130,6 @@ impl TryFrom<&[u8]> for Extension {
 
                 let piece = get_int(&dict, "piece")? as u32;
 
-                println!("Extension message type: {msg_type}");
-
                 match *msg_type {
                     MESSAGE_TYPE_REQUEST => Ok(Extension::RequestMetadata { ext_id, piece }),
                     MESSAGE_TYPE_DATA => {
@@ -134,6 +142,7 @@ impl TryFrom<&[u8]> for Extension {
                             data: Bytes::from(bytes),
                         })
                     }
+                    MESSAGE_TYPE_REJECTED => Ok(Extension::Rejected { ext_id, piece }),
                     _ => Err(BitTorrentError::DeserdeError(
                         "Unknown msg_type".to_string(),
                     )),
