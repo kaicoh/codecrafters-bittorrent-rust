@@ -1,12 +1,6 @@
-use crate::{
-    bencode::Deserializer,
-    meta::{Info, MagnetLink},
-    net::Extension,
-    util::Bytes20,
-};
+use crate::meta::MagnetLink;
 
 use super::utils;
-use serde::Deserialize;
 use std::error::Error;
 use std::str::FromStr;
 
@@ -15,33 +9,13 @@ pub(crate) async fn run(url: String) -> Result<(), Box<dyn Error>> {
     println!("Tracker URL: {}", magnet_link.tracker().unwrap_or("N/A"));
 
     let resp = utils::get_response(&magnet_link).await?;
+    let peers = resp.peers.as_ref();
 
-    for peer in resp.peers {
-        let info_hash = magnet_link.info_hash();
-        let peer_id = Bytes20::new(*b"-CT0001-012345678901");
+    let info_hash = magnet_link.info_hash();
+    let mut streams = utils::connect(peers, info_hash).await?;
 
-        let mut stream = peer.connect(info_hash, peer_id).await?;
-
-        let ext_id = stream
-            .extension_handshake()
-            .await?
-            .metadata_ext_id()
-            .ok_or("Peer did not advertise ut_metadata extension")?;
-
-        stream
-            .send_message(Extension::RequestMetadata { ext_id, piece: 0 })
-            .await?;
-
-        let info = match stream.wait_extention().await? {
-            Extension::Metadata { data, .. } => {
-                let mut deserializer = Deserializer::new(data.as_ref());
-                Info::deserialize(&mut deserializer)?
-            }
-            _ => return Err("Unexpected extension message".into()),
-        };
-
-        utils::print_info(&info)?;
-    }
+    let info = utils::get_ext_info(&mut streams).await?;
+    utils::print_info(&info)?;
 
     Ok(())
 }
