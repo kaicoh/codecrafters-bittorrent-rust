@@ -55,4 +55,7 @@ pub enum BitTorrentError {
 
     #[error("Hex decode error: {0}")]
     FromHexError(#[from] hex::FromHexError),
+
+    #[error("Other error: {0}")]
+    Other(String),
 }

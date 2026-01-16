@@ -1,12 +1,6 @@
-use crate::{
-    bencode::Deserializer,
-    meta::{Info, MagnetLink},
-    net::{Extension, broker},
-    util::Bytes20,
-};
+use crate::{meta::MagnetLink, util::Bytes20};
 
 use super::utils;
-use serde::Deserialize;
 use std::error::Error;
 use std::str::FromStr;
 use tracing::info;
@@ -15,64 +9,43 @@ pub(crate) async fn run(output: String, url: String, index: u32) -> Result<(), B
     let magnet_link = MagnetLink::from_str(&url)?;
 
     let resp = utils::get_response(&magnet_link).await?;
+    let peers = resp.peers.as_ref();
 
-    for peer in resp.peers.iter() {
-        let info_hash = magnet_link.info_hash();
-        let peer_id = Bytes20::new(*b"-CT0001-012345678901");
+    let info_hash = magnet_link.info_hash();
+    let mut streams = utils::connect(peers, info_hash).await?;
 
-        let mut stream = peer.connect(info_hash, peer_id).await?;
+    let info = utils::get_ext_info(&mut streams).await?;
+    let length = info.piece_length(index as usize);
+    let piece_hash = info
+        .piece_hashes()
+        .get(index as usize)
+        .copied()
+        .ok_or_else(|| format!("Invalid piece index: {index}"))?;
 
-        let ext_id = stream
-            .extension_handshake()
-            .await?
-            .metadata_ext_id()
-            .ok_or("Peer did not advertise ut_metadata extension")?;
+    info!("Downloading piece {index}...");
 
-        stream
-            .send_message(Extension::RequestMetadata { ext_id, piece: 0 })
-            .await?;
+    let (mut brokers, mut piece_rx) = utils::broker_channels(streams).await?;
+    let broker = brokers.get_item();
+    broker.request_piece(index as usize, length).await;
 
-        let info = match stream.wait_extention().await? {
-            Extension::Metadata { data, .. } => {
-                let mut deserializer = Deserializer::new(data.as_ref());
-                Info::deserialize(&mut deserializer)?
-            }
-            Extension::Rejected { .. } => {
-                info!("Peer {peer} rejected metadata request for piece {index}");
-                continue; // Try the next peer
-            }
-            _ => return Err("Unexpected extension message".into()),
-        };
+    info!("Waiting for piece {index} data...");
 
-        stream.ready().await?;
+    if let Some(piece) = piece_rx.recv().await {
+        let hash = Bytes20::sha1_hash(&piece.data);
 
-        let (mut b, mut piece_rx) = broker::create(stream);
-        let length = info.piece_length(index as usize);
-        b.request_piece(index as usize, length).await;
+        if piece_hash == hash {
+            std::fs::write(output, piece.data)?;
 
-        if let Some(piece) = piece_rx.recv().await {
-            let hash = Bytes20::sha1_hash(&piece.data);
+            info!("🎉 Piece {index} downloaded and verified.");
 
-            let piece_hash = info
-                .piece_hashes()
-                .get(index as usize)
-                .copied()
-                .ok_or_else(|| format!("Invalid piece index: {index}"))?;
-
-            if piece_hash == hash {
-                std::fs::write(output, piece.data)?;
-
-                info!("🎉 Piece {index} downloaded and verified.");
-
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "Hash mismatch for piece {index}. Expected {}, got {}.",
-                    piece_hash.hex_encoded(),
-                    hash.hex_encoded()
-                )
-                .into());
-            }
+            return Ok(());
+        } else {
+            return Err(format!(
+                "Hash mismatch for piece {index}. Expected {}, got {}.",
+                piece_hash.hex_encoded(),
+                hash.hex_encoded()
+            )
+            .into());
         }
     }
 
